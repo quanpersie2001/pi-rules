@@ -1,5 +1,5 @@
 {
-  "name": "@quandev/pi-rules",
+  "name": "@quandev104/pi-rules",
   "version": "0.1.0",
   "description": "Native Pi project rules package with rule injection, commands, and background maintenance.",
   "type": "module",
@@ -64,6 +64,6 @@
     "vitest": "^4.1.8"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   }
 }
