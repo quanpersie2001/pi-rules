@@ -32,16 +32,17 @@ jobs:
           cache: npm
           registry-url: https://registry.npmjs.org
 
-      - run: npm install
+      - name: Install dependencies
+        run: npm install
 
       - name: Full check
         run: npm run check
 
       - name: Bump version
+        id: bump
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          # Discard lock file changes from npm install
           git checkout -- .
           if [ "${{ inputs.version }}" = "alpha" ]; then
             npm version prerelease --preid=alpha --no-push
@@ -50,15 +51,14 @@ jobs:
           else
             npm version ${{ inputs.version }} --no-push
           fi
-
-      - name: Extract version
-        id: version
-        run: echo "VERSION=$(node -p 'require(\"./package.json\").version')" >> "$GITHUB_OUTPUT"
+          VERSION=$(node -p 'require("./package.json").version')
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          git push --follow-tags
 
       - name: Generate release notes
         id: notes
         run: |
-          CURRENT_TAG="v${{ steps.version.outputs.VERSION }}"
+          CURRENT_TAG="v${{ steps.bump.outputs.VERSION }}"
           PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]' | sed -n '2p')
 
           if [ -z "$PREVIOUS_TAG" ]; then
@@ -70,10 +70,9 @@ jobs:
             echo "EOF" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Push commits and tags
-        run: git push --follow-tags
-
       - name: Publish to npm
+        id: npm_publish
+        continue-on-error: true
         run: |
           npm install
           if [ "${{ inputs.version }}" = "alpha" ]; then
@@ -89,20 +88,26 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.version.outputs.VERSION }}
-          name: v${{ steps.version.outputs.VERSION }}
+          tag_name: v${{ steps.bump.outputs.VERSION }}
+          name: v${{ steps.bump.outputs.VERSION }}
           prerelease: ${{ inputs.version == 'alpha' || inputs.version == 'beta' }}
           body: |
-            ## @quandev104/pi-rules@${{ steps.version.outputs.VERSION }}
+            ## @quandev104/pi-rules@${{ steps.bump.outputs.VERSION }}
 
             ${{ steps.notes.outputs.BODY }}
 
             ### Install
 
             ```bash
-            pi install npm:@quandev104/pi-rules@${{ steps.version.outputs.VERSION }}
+            pi install npm:@quandev104/pi-rules@${{ steps.bump.outputs.VERSION }}
             ```
 
             > Latest: `pi install npm:@quandev104/pi-rules`
             > Beta: `pi install npm:@quandev104/pi-rules@beta`
             > Alpha: `pi install npm:@quandev104/pi-rules@alpha`
+
+      - name: Check npm publish status
+        if: steps.npm_publish.outcome == 'failure'
+        run: |
+          echo "::warning::npm publish failed. GitHub Release was created but package was not published to npm."
+          echo "::warning::Check NPM_TOKEN secret has bypass 2FA enabled."
