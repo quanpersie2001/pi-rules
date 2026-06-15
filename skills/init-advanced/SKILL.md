@@ -1,7 +1,6 @@
 ---
 name: init-advanced
 description: Creates the .pi/rules/ documentation system for a codebase. This skill bootstraps context-optimized documentation for the project, updates specific module's documentation after a refactor, or audits the .pi/rules/ tree for stale or missing entries.
-disable-model-invocation: true
 allowed-tools: read bash write
 ---
 
@@ -13,9 +12,9 @@ Your only job is documentation. You do not write application code, refactor file
 
 ## Available Scripts
 
--   **`scripts/scan_project.sh`** — Scans the project files. Run from the package root:
+-   **`scripts/scan_project.sh`** — Scans the project files. Run from the project root:
     ```bash
-    bash <package-root>/scripts/scan_project.sh
+    bash <skill-dir>/scripts/scan_project.sh
     ```
 
 ## The System You're Building
@@ -54,10 +53,10 @@ When describing subdirectories in a parent rules file, each entry must answer **
 Run the script to understand the project before writing anything:
 
 ```bash
-bash <package-root>/scripts/scan_project.sh
+bash <skill-dir>/scripts/scan_project.sh
 ```
 
-If the package root is not obvious, use ordinary file discovery to locate the installed `pi-rules/scripts/scan_project.sh` file before running it.
+If `<skill-dir>` is not obvious, locate the installed `init-advanced/scripts/scan_project.sh` file before running it.
 
 ### Step 2 — Plan
 

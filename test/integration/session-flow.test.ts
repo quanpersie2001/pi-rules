@@ -41,18 +41,8 @@ summary: Global
 
 		const status = harness.statuses.get("pi-rules");
 		expect(status, "session_start should set the pi-rules status").toBeDefined();
-		expect(status?.text).toContain("[pi-rules]");
+		expect(status?.text).toContain("pi-rules");
 		expect(status?.text).toContain("1 active");
-
-		const widget = harness.widgets.get("pi-rules");
-		expect(widget, "session_start should set the pi-rules widget").toBeDefined();
-		expect(widget?.content).toBeInstanceOf(Array);
-		const lines = widget?.content as string[];
-		// First line is a horizontal border; the title is at index 1.
-		expect(lines.length).toBeGreaterThanOrEqual(2);
-		expect(lines[0]).toMatch(/^─+$/);
-		expect(lines[1]).toContain("[pi-rules]");
-		expect(lines[1]).toContain("1 active rules");
 	});
 
 	it("injects always-apply rules into the system prompt on before_agent_start", async () => {

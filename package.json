@@ -2,6 +2,7 @@
   "name": "@quandev104/pi-rules",
   "version": "0.1.1",
   "description": "Native Pi project rules package with rule injection, commands, and background maintenance.",
+  "license": "MIT",
   "type": "module",
   "keywords": [
     "pi-package",

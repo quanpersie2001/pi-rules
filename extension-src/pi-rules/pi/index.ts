@@ -9,7 +9,7 @@ import { formatRuleContext } from "../domain/formatter.js";
 import type { MatchedRule } from "../domain/types.js";
 import { extractPromptPaths, extractRemovedPaths, extractToolPaths } from "../features/tool-paths.js";
 import { findProjectRoot, normalizePath } from "../shared/path.js";
-import { renderBannerLines, statusLineText } from "./banner.js";
+import { statusLineText } from "./banner.js";
 import { registerCommands } from "./commands.js";
 import { createRuntime, normalizeCandidatePath, type RuntimeDeps } from "./runtime.js";
 
@@ -295,16 +295,6 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		const hasErrors = status?.diagnostics.some((diagnostic) => diagnostic.severity === "error") ?? false;
 
 		ctx.ui.setStatus("pi-rules", statusLineText({ ruleCount, hasErrors }));
-		ctx.ui.setWidget(
-			"pi-rules",
-			renderBannerLines({
-				ruleCount,
-				projectRoot: runtime.state.projectRoot,
-				changedPathsCount: runtime.state.recentChangedPaths.size,
-				lastInjectedCount: runtime.state.lastContext?.rules.length ?? 0,
-				maintainerRunsCount: activeRuns.runs.length,
-			}),
-		);
 	}
 }
 

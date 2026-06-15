@@ -1,9 +1,6 @@
-import { DEFAULT_BANNER_WIDTH } from "../app/constants.js";
-
 /**
- * Data backing the TUI banner widget. `ruleCount` is the total number of
- * active rules (loaded into the engine), while `lastInjectedCount` is the
- * number of rules that were attached to the most recent injection.
+ * Data backing the TUI banner widget. Only `ruleCount` is used in the
+ * rendered output; the rest is kept for forward-compatibility.
  */
 export interface BannerInput {
 	ruleCount: number;
@@ -19,21 +16,11 @@ export interface StatusLineInput {
 }
 
 /**
- * Render the multi-line banner content for `ctx.ui.setWidget`. Width defaults
- * to `process.stdout.columns` when available, otherwise `DEFAULT_BANNER_WIDTH`.
+ * Render the multi-line banner content for `ctx.ui.setWidget`.
+ * Only shows the active rules count — keep it minimal.
  */
-export function renderBannerLines(input: BannerInput, width: number = resolveWidth()): string[] {
-	const safeWidth = Math.max(8, width);
-	const border = "─".repeat(safeWidth);
-	return [
-		border,
-		`[pi-rules] ${input.ruleCount} active rules`,
-		`Project root: ${input.projectRoot}`,
-		`Changed paths: ${input.changedPathsCount}`,
-		`Last injected: ${input.lastInjectedCount}`,
-		`Maintainer runs: ${input.maintainerRunsCount}`,
-		border,
-	];
+export function renderBannerLines(input: BannerInput): string[] {
+	return [`[pi-rules] ${input.ruleCount} active rules`];
 }
 
 /**
@@ -41,14 +28,7 @@ export function renderBannerLines(input: BannerInput, width: number = resolveWid
  * Appends an error indicator when the engine has produced error-level diagnostics.
  */
 export function statusLineText({ ruleCount, hasErrors }: StatusLineInput): string {
-	const base = `[pi-rules] ${ruleCount} active`;
+	const base = `pi-rules: ${ruleCount} active`;
 	return hasErrors ? `${base} (!)` : base;
 }
 
-function resolveWidth(): number {
-	const columns = process.stdout?.columns;
-	if (typeof columns === "number" && columns > 0) {
-		return columns;
-	}
-	return DEFAULT_BANNER_WIDTH;
-}
