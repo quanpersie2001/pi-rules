@@ -11,6 +11,8 @@ on:
           - patch
           - minor
           - major
+          - alpha
+          - beta
 
 permissions:
   contents: write
@@ -39,7 +41,13 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          npm version ${{ inputs.version }} --no-push
+          if [ "${{ inputs.version }}" = "alpha" ]; then
+            npm version prerelease --preid=alpha --no-push
+          elif [ "${{ inputs.version }}" = "beta" ]; then
+            npm version prerelease --preid=beta --no-push
+          else
+            npm version ${{ inputs.version }} --no-push
+          fi
 
       - name: Extract version
         id: version
@@ -64,7 +72,14 @@ jobs:
         run: git push --follow-tags
 
       - name: Publish to npm
-        run: npm publish --access public
+        run: |
+          if [ "${{ inputs.version }}" = "alpha" ]; then
+            npm publish --access public --tag alpha
+          elif [ "${{ inputs.version }}" = "beta" ]; then
+            npm publish --access public --tag beta
+          else
+            npm publish --access public
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -73,6 +88,7 @@ jobs:
         with:
           tag_name: v${{ steps.version.outputs.VERSION }}
           name: v${{ steps.version.outputs.VERSION }}
+          prerelease: ${{ inputs.version == 'alpha' || inputs.version == 'beta' }}
           body: |
             ## @quandev104/pi-rules@${{ steps.version.outputs.VERSION }}
 
@@ -83,3 +99,7 @@ jobs:
             ```bash
             pi install npm:@quandev104/pi-rules@${{ steps.version.outputs.VERSION }}
             ```
+
+            > Latest: `pi install npm:@quandev104/pi-rules`
+            > Beta: `pi install npm:@quandev104/pi-rules@beta`
+            > Alpha: `pi install npm:@quandev104/pi-rules@alpha`
