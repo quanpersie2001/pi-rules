@@ -1,18 +1,20 @@
-name: Publish to npm
+name: Release
 
 on:
   push:
     tags:
       - "v*"
 
+permissions:
+  contents: write
+
 jobs:
-  publish:
+  release:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -25,7 +27,46 @@ jobs:
       - name: Full check
         run: npm run check
 
-      - name: Publish
+      - name: Extract version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          CURRENT_TAG="${GITHUB_REF#refs/tags/}"
+          PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]' | sed -n '2p')
+
+          if [ -z "$PREVIOUS_TAG" ]; then
+            echo "BODY<<EOF" >> "$GITHUB_OUTPUT"
+            echo "Initial release." >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          else
+            echo "BODY<<EOF" >> "$GITHUB_OUTPUT"
+            git log "$PREVIOUS_TAG..$CURRENT_TAG" --pretty=format:"- %s (%h)" --no-merges >> "$GITHUB_OUTPUT"
+            echo "" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to npm
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: v${{ steps.version.outputs.VERSION }}
+          body: |
+            ## @quandev104/pi-rules@${{ steps.version.outputs.VERSION }}
+
+            ${{ steps.notes.outputs.BODY }}
+
+            ### Install
+
+            ```bash
+            pi install npm:@quandev104/pi-rules@${{ steps.version.outputs.VERSION }}
+            ```
+
+            **Full Changelog**: https://github.com/quanpersie2001/pi-rules/compare/${{ steps.notes.outputs.PREVIOUS_TAG || 'v0.0.0' }}...${{ github.ref_name }}
