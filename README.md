@@ -1,39 +1,90 @@
-# @quandev/pi-rules
+# @quandev104/pi-rules
 
-Native [Pi](https://github.com/mariozechner/pi) package for **path-scoped project rules** — discover, inject, and maintain context-aware rules under `.pi/rules/`.
+[![CI](https://github.com/quanpersie2001/pi-rules/actions/workflows/ci.yml/badge.svg)](https://github.com/quanpersie2001/pi-rules/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@quandev104/pi-rules)](https://www.npmjs.com/package/@quandev104/pi-rules)
+[![license](https://img.shields.io/npm/l/@quandev104/pi-rules)](LICENSE)
 
-## What it does
+> Zero-dependency [Pi](https://github.com/mariozechner/pi) extension for **path-scoped project rules** — auto-discovers, injects, and maintains context-aware rules under `.pi/rules/`.
 
-`pi-rules` watches your project and injects the right conventions into the LLM context at exactly the right time:
+---
 
-- **Static injection** — at the start of each turn, rules matching the current prompt and recently-touched files are injected into the system prompt.
-- **Dynamic injection** — when a tool reads or writes a file, rules matching that file path are appended to the tool result.
-- **Background maintenance** — after each turn, changed files are evaluated and `.pi/rules/` is updated automatically.
+## Why?
+
+Every project has conventions that LLMs don't know: naming patterns, architecture decisions, API contracts, team preferences. You could paste them into every prompt — or let `pi-rules` inject the right ones automatically based on which files you're working on.
+
+## How it works
+
+```
+User: "Fix the auth handler in src/api/auth/login.ts"
+
+  ┌─────────────────────────────────────────────────┐
+  │ pi-rules extension                              │
+  │                                                 │
+  │ 1. Extract paths from prompt + tool results     │
+  │ 2. Match against .pi/rules/**/*.md frontmatter  │
+  │ 3. Inject matched rules into context            │
+  │ 4. After turn: queue background maintenance     │
+  └─────────────────────────────────────────────────┘
+
+System prompt now includes:
+  ┌─────────────────────────────────────────────────┐
+  │ ## Injected Project Rules                       │
+  │ ### Full Rule: .pi/rules/api/auth.md            │
+  │ - Use passport.js for authentication            │
+  │ - Always validate input with Zod schemas        │
+  │ - Return 401, never throw on auth failure       │
+  └─────────────────────────────────────────────────┘
+```
+
+### Three injection modes
+
+| Mode | When | What |
+|------|------|------|
+| **Static** | Start of each turn | Rules matching prompt + recently-touched files |
+| **Dynamic** | After each tool call | Rules matching files just read/written |
+| **Both** | Default | Both static and dynamic |
+
+### Path collection
+
+Rules are matched against paths from multiple sources:
+
+1. **Prompt extraction** — file paths mentioned in user message
+2. **Tool results** — files read/written by `read`, `edit`, `write`, `bash`
+3. **Session hot paths** — accumulated across turns (FIFO, capped at 100)
+4. **Last context fallback** — re-injects previous rules after `session_compact`
+
+### Injection tiers
+
+When multiple rules match:
+
+```
+.pi/rules/api/api.md          → summary only (parent)
+.pi/rules/api/auth/auth.md    → full body (child, more specific)
+.pi/rules/api/auth/inventory  → listed as available (not injected)
+```
+
+### Prompt filter
+
+Non-code prompts (e.g. "what is React?") skip path-matched rules. Only `alwaysApply: true` rules are injected regardless.
+
+---
 
 ## Install
 
 ```bash
-pi install npm:@quandev/pi-rules
-```
-
-Or install locally during development:
-
-```bash
-pi install -l /absolute/path/to/pi-rules
+pi install npm:@quandev104/pi-rules
 ```
 
 ## Quick start
-
-After installing, run the `init-advanced` skill to bootstrap your project:
 
 ```
 /pi-rules:init
 ```
 
-This creates:
+This bootstraps your project with:
+
 - `AGENTS.md` — root context file with project map
-- `.pi/rules/general.md` — always-apply collaboration rules
-- `.pi/rules/<module>/` — path-scoped convention files
+- `.pi/rules/**/*.md` — path-scoped convention files
 
 Then write rules as markdown with YAML frontmatter:
 
@@ -55,64 +106,35 @@ priority: 10
 - Auth via `withAuth()` wrapper.
 ```
 
-## How injection works
-
-### Rule matching
-
-Each rule is matched against **target paths** collected from:
-
-1. Paths mentioned in the user prompt (regex extraction)
-2. Files read by `read`/`grep`/`find`/`ls` tools this turn
-3. Files written by `write`/`edit`/`bash` tools this turn
-4. Session-level hot paths (survives across turns and `session_compact`)
-5. Last injected context paths (fallback after compact)
-
-Matching uses **picomatch** glob patterns from the `paths:` frontmatter field, plus optional **trigger phrases** (natural language substring match against the prompt).
-
-### Injection tiers
-
-When multiple rules match:
-
-- **Child rules** (more specific path) are injected **fully**
-- **Parent rules** (shorter path prefix) are injected as **summary only**
-- **Inventory files** (`kind: inventory`) are listed as "Available Inventories" but not injected
-
-### Prompt-type filter
-
-Non-code prompts (e.g. "what is React?") skip injection for path-matched rules. Only `alwaysApply: true` rules are always injected regardless.
+---
 
 ## Frontmatter reference
 
 ```yaml
 ---
-kind: rules | inventory        # File type (default: rules)
 paths:                         # Glob patterns for path matching
   - "src/auth/**/*.ts"
 summary: One-line description  # Used in injection header
 triggers:                      # Natural language phrases
   - "fix auth bug"
   - "login flow"
-alwaysApply: true              # Inject on every turn (use sparingly)
-priority: 10                   # Higher = injected first (default: 0)
-tags: [security, api]          # Metadata tags
-owner: team-auth               # Ownership info
-createdBy: pi-rules:init       # Creation source
-updatedAt: 2026-01-15          # Last update date
+alwaysApply: true              # Inject on every turn
+priority: 10                   # Higher = injected first
+kind: rules                    # "rules" | "inventory"
 ---
 ```
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `kind` | `"rules"` \| `"inventory"` | `"rules"` | File type. Only `rules` files are fully injected. |
-| `paths` | `string \| string[]` | — | Glob patterns matched against target paths. |
-| `summary` | `string` | — | One-line routing summary. |
-| `triggers` | `string[]` | — | Natural language phrases for trigger matching. |
-| `alwaysApply` | `boolean` | `false` | Inject on every turn regardless of path match. |
-| `priority` | `number` | `0` | Sort order — higher priority injected first. |
-| `tags` | `string[]` | — | Metadata tags. |
-| `owner` | `string` | — | Ownership label. |
-| `createdBy` | `string` | — | How this rule was created. |
-| `updatedAt` | `string` | — | ISO date of last update. |
+| `paths` | `string \| string[]` | — | Glob patterns matched against target paths. Supports `*`, `**`, `?`, `{a,b}`. |
+| `summary` | `string` | — | One-line routing summary. Used in parent injection headers. |
+| `triggers` | `string[]` | — | Natural language phrases. If the prompt contains a trigger, the rule is injected. |
+| `alwaysApply` | `boolean` | `false` | Inject on every turn regardless of path match. Use sparingly. |
+| `priority` | `number` | `0` | Sort order. Higher priority rules are injected first. |
+| `kind` | `"rules"` \| `"inventory"` | `"rules"` | `rules` files are fully injected. `inventory` files are listed but not injected. |
+| `description` | `string` | — | Longer description (not used in injection). |
+
+---
 
 ## Commands
 
@@ -121,90 +143,101 @@ updatedAt: 2026-01-15          # Last update date
 | `/pi-rules:init` | Bootstrap `.pi/rules/` via the `init-advanced` skill |
 | `/pi-rules:status` | Show discovered rules and diagnostics |
 | `/pi-rules:context` | Show last injected rule context |
-| `/pi-rules:maintain <file>...` | Manually trigger rule maintenance for changed files |
-| `/pi-rules:maintainer-status` | Show maintainer queue, active runs, and lock state |
-| `/pi-rules:maintainer-log` | Show tail of `.pi/.pi-rules/maintainer.log` |
-| `/pi-rules:maintainer-kill` | Kill the oldest active maintainer run |
+| `/pi-rules:maintain <file>...` | Manually trigger rule maintenance |
+| `/pi-rules:maintainer-status` | Show maintainer queue and active runs |
+| `/pi-rules:maintainer-log` | Show tail of maintainer log |
+| `/pi-rules:maintainer-kill` | Kill active maintainer processes |
+
+---
 
 ## Tools
 
 | Tool | Description |
 |------|-------------|
-| `create_rule` | Create a new `.pi/rules/` markdown file with frontmatter. Used by the model when the user wants to persist a project convention. |
+| `create_rule` | Create a new `.pi/rules/` file programmatically |
+
+---
 
 ## Environment variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PI_RULES_DISABLED` | unset | Set to `1` to disable injection and maintenance |
+| `PI_RULES_DISABLED` | unset | Set `1` to disable extension |
 | `PI_RULES_MAX_RULE_CHARS` | `12000` | Per-rule body character cap |
 | `PI_RULES_MAX_CONTEXT_CHARS` | `40000` | Total injected chars per turn |
-| `PI_RULES_MAINTAINER_DISABLED` | unset | Set to `1` to disable background maintenance |
-| `PI_RULES_MAINTAINER_LOG_LINES` | `100` | Default log tail line count |
+| `PI_RULES_MAINTAINER_DISABLED` | unset | Set `1` to disable background maintenance |
+
+---
+
+## Skills
+
+### `init-advanced`
+
+Bootstraps `.pi/rules/` for a project. Runs reconnaissance, interviews the developer, and creates AGENTS.md + rule files with proper frontmatter.
+
+### `rules-maintainer`
+
+Hidden skill (`disable-model-invocation: true`). After code changes, evaluates significance and applies minimal rule updates. Uses a TH1-TH4 decision framework:
+
+| Threshold | Condition | Action |
+|-----------|-----------|--------|
+| **TH1** | Rule exists, still correct | Skip |
+| **TH2** | Rule exists, convention changed | Update body |
+| **TH3** | No rule, pattern in ≥3 files | Create new rule |
+| **TH4** | No rule, pattern in 1-2 files | Log and monitor |
+
+---
 
 ## Architecture
-
-```
-extension-src/pi-rules/
-├── shared/        Low-level utilities (path, fs, hash, id, time)
-├── domain/        Core rule logic (parser, scanner, matcher, formatter, engine, cache, ordering, truncator)
-├── features/      Operational workflows (maintainer, maintenance-queue, tool-paths)
-├── app/           Runtime config and state management
-└── pi/            Pi API adapters (commands, events, tools, banner, UI)
-```
-
-Layer boundaries are enforced by **dependency-cruiser**:
 
 ```
 shared → domain → features → app → pi
 ```
 
-Only `pi/` may skip layers. All others must follow the strict chain.
+Layer boundaries enforced by **dependency-cruiser**. Only `pi/` may skip layers.
+
+```
+extension-src/pi-rules/
+├── shared/        Zero-dep utilities (path, fs, hash, glob, frontmatter)
+├── domain/        Core logic (parser, scanner, matcher, engine, cache)
+├── features/      Workflows (maintainer, queue, tool-paths)
+├── app/           Config and runtime state
+└── pi/            Pi API adapters (commands, events, tools, UI)
+```
+
+### Zero runtime dependencies
+
+All utilities are implemented from scratch using only `node:*` builtins:
+
+- **Frontmatter parser** — custom YAML subset parser (replaces `gray-matter`)
+- **Glob matcher** — custom glob-to-regex (replaces `picomatch`)
+
+---
 
 ## Development
 
 ```bash
 npm install
-npm run build       # Build dist/index.* and dist/extensions/pi-rules.js
-npm run typecheck   # TypeScript checking (no emit)
+npm run build       # Build dist/
+npm run typecheck   # TypeScript checking
 npm run lint        # Biome linting
-npm run depcruise   # Dependency boundary verification
-npm test            # Vitest unit + integration tests
+npm run depcruise   # Dependency boundary check
+npm test            # Vitest (209 tests)
 npm run check       # All of the above
 ```
 
-## Skills
+### CI/CD
 
-| Skill | Description |
-|-------|-------------|
-| `init-advanced` | Bootstrap `.pi/rules/` for a project. Runs reconnaissance, creates AGENTS.md and rule files with proper frontmatter. |
-| `rules-maintainer` | Hidden skill (`disable-model-invocation: true`). Maintains rules after code changes. Evaluates significance, applies minimal updates, logs actions. |
+- **Push/PR to main** → runs full CI (typecheck, lint, depcruise, test, build) on Node 20 + 22
+- **Push tag `v*`** → auto-publishes to npm
 
-## Project structure
-
+```bash
+git tag v0.1.1
+git push origin v0.1.1
+# → GitHub Actions publishes @quandev104/pi-rules@0.1.1
 ```
-pi-rules/
-├── package.json                 npm package with pi manifest
-├── tsup.config.ts               Build config (dual CJS/ESM + extension bundle)
-├── tsconfig.json                TypeScript config
-├── dependency-cruiser.config.cjs  Layer boundary enforcement
-├── biome.json                   Linting config
-├── vitest.config.ts             Test config
-├── extension-src/
-│   └── pi-rules/                Source code (layered architecture)
-├── dist/                        Build artifacts
-├── skills/
-│   ├── init-advanced/           Init skill with templates
-│   └── rules-maintainer/        Hidden maintainer skill
-├── scripts/
-│   └── scan_project.sh          Reconnaissance script for init-advanced
-├── test/
-│   ├── unit/                    Unit tests
-│   ├── integration/             Integration tests (fake Pi harness)
-│   ├── helpers/                 Test utilities (fake-pi-harness)
-│   └── fixtures/                Test fixtures
-└── references/                  Reference implementation (not distributed)
-```
+
+---
 
 ## License
 
