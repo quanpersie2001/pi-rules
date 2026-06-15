@@ -31,4 +31,3 @@ export function statusLineText({ ruleCount, hasErrors }: StatusLineInput): strin
 	const base = `pi-rules: ${ruleCount} active`;
 	return hasErrors ? `${base} (!)` : base;
 }
-

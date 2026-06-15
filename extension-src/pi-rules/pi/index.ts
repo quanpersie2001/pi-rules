@@ -289,7 +289,6 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 			return;
 		}
 
-		const activeRuns = await runtime.queue.readActiveRuns().catch(() => ({ version: 1 as const, runs: [] }));
 		const status = await runtime.engine.getStatus(ctx.cwd).catch(() => undefined);
 		const ruleCount = status?.ruleCount ?? 0;
 		const hasErrors = status?.diagnostics.some((diagnostic) => diagnostic.severity === "error") ?? false;
