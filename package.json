@@ -1,6 +1,6 @@
 {
   "name": "@quandev104/pi-rules",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Native Pi project rules package with rule injection, commands, and background maintenance.",
   "type": "module",
   "keywords": [
@@ -57,7 +57,6 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",
     "@types/node": "^24.0.0",
-
     "dependency-cruiser": "^17.4.3",
     "tsup": "^8.5.0",
     "typescript": "^5.8.3",
