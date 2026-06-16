@@ -1,10 +1,25 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.3] - 2026-06-16
+
+### Bug Fixes
+
+- Add GITHUB_TOKEN to release-please workflow
+- Simplify release-please to release-type only
+- Match release-please config to reference implementation
+
+### Features
+
+- Add hot reload, commitlint, symlink dedup, doctor command, release-please, and e2e tests
 
 ### Miscellaneous Tasks
 
 - Auto-generate CHANGELOG.md on release via git-cliff
+- Remove emoji icons from changelog groups
+
+### Revert
+
+- Remove release-please, restore manual workflow_dispatch release flow
 
 ## [0.1.2] - 2026-06-15
 
