@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -8,6 +8,7 @@ import { addSessionHotPaths, type RuntimeState, resetTurnState } from "../app/st
 import { formatRuleContext } from "../domain/formatter.js";
 import type { MatchedRule } from "../domain/types.js";
 import { extractPromptPaths, extractRemovedPaths, extractToolPaths } from "../features/tool-paths.js";
+import { startWatcher, type Watcher } from "../features/watcher.js";
 import { findProjectRoot, normalizePath } from "../shared/path.js";
 import { statusLineText } from "./banner.js";
 import { registerCommands } from "./commands.js";
@@ -66,6 +67,8 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 	registerFlags(pi);
 
 	let runtime = createRuntime(process.cwd(), mergeConfig(readConfigFromEnv(), readFlags(pi)));
+	let watcher: Watcher | null = null;
+	let reloadInFlight = false;
 
 	function syncRuntime(cwd: string): void {
 		const nextConfig = mergeConfig(readConfigFromEnv(), readFlags(pi));
@@ -101,6 +104,29 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		// Use loadRules with forceReload=true at startup to populate cache
 		await runtime.engine.loadRules(ctx.cwd, true);
 		await updateWidget(ctx);
+
+		// Start file watcher for hot reload
+		const rulesDir = resolve(runtime.state.projectRoot, ".pi/rules");
+		let roots: string[] = [];
+		try {
+			await stat(rulesDir);
+			roots = [rulesDir];
+		} catch {
+			// rules dir doesn't exist yet — nothing to watch
+		}
+		if (roots.length > 0) {
+			watcher = startWatcher({
+				roots,
+				onChange: () => {
+					if (reloadInFlight) return;
+					reloadInFlight = true;
+					runtime.engine.loadRules(ctx.cwd, true).finally(() => {
+						reloadInFlight = false;
+					});
+				},
+				debounceMs: 100,
+			});
+		}
 	});
 
 	pi.on("session_compact", async (_event, ctx) => {
@@ -232,6 +258,14 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		await runtime.maintainer.startOrQueue(changedPaths, "agent_end");
 		await updateWidget(ctx);
 		return undefined;
+	});
+
+	pi.on("session_shutdown", async (_event, _ctx) => {
+		if (watcher !== null) {
+			await watcher.stop();
+			watcher = null;
+		}
+		reloadInFlight = false;
 	});
 
 	pi.registerTool({

@@ -11,12 +11,16 @@ export async function scanRuleFiles(cwd: string): Promise<RuleScanResult> {
 	const diagnostics: RuleDiagnostic[] = [];
 	const files = await listFilesRecursive(rulesDir);
 	const ruleFiles: RuleFile[] = [];
+	const seenRealpaths = new Set<string>();
 
 	for (const absolutePath of files) {
 		if (!absolutePath.endsWith(".md")) continue;
 		if (!isSubPath(rulesDir, absolutePath)) continue;
 		if (normalizePath(absolutePath).includes("/.pi/.pi-rules/")) continue;
 		const realPath = await resolveRealPath(absolutePath);
+		// Deduplicate symlinked rules by realpath
+		if (seenRealpaths.has(realPath)) continue;
+		seenRealpaths.add(realPath);
 		const fingerprint = fileStatFingerprint(absolutePath);
 		if (fingerprint === "missing") {
 			diagnostics.push({ severity: "warning", rulePath: absolutePath, message: "Unable to stat rule file" });

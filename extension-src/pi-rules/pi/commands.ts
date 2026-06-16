@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { InjectionRecord, RuleStatus } from "../domain/types.js";
+import { runDoctor } from "./doctor.js";
 import { normalizeCandidatePath, type RuntimeDeps } from "./runtime.js";
 
 /**
@@ -61,6 +62,16 @@ export function registerCommands(pi: ExtensionAPI, runtime: CommandRuntime): voi
 			const current = runtime.getRuntime();
 			const status = await current.engine.getStatus(ctx.cwd);
 			ctx.ui.notify(formatStatus(status), "info");
+		},
+	});
+
+	pi.registerCommand("pi-rules:doctor", {
+		description: "Show rule discovery report with diagnostics",
+		handler: async (_args, ctx) => {
+			runtime.syncRuntime(ctx.cwd);
+			const current = runtime.getRuntime();
+			const result = await runDoctor(ctx.cwd, current);
+			ctx.ui.notify(result.lines.join("\n"), "info");
 		},
 	});
 

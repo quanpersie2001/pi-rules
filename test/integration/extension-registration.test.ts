@@ -31,13 +31,14 @@ describe("pi-rules extension registration", () => {
 		expect(harness.pi.getFlag("pi-rules-maintainer-concurrency")).toBe("1");
 	});
 
-	it("registers exactly 7 commands with the expected names", () => {
-		expect(harness.commands).toHaveLength(7);
+	it("registers exactly 8 commands with the expected names", () => {
+		expect(harness.commands).toHaveLength(8);
 
 		const expectedCommands = [
 			"pi-rules:init",
 			"pi-rules:maintain",
 			"pi-rules:status",
+			"pi-rules:doctor",
 			"pi-rules:context",
 			"pi-rules:maintainer-status",
 			"pi-rules:maintainer-log",

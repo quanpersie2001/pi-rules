@@ -33,3 +33,4 @@ references/
 
 # Pi runtime state (in user projects, not here, but defensive)
 .pi/
+!test/e2e/fixtures/.pi/
