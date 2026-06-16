@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.4] - 2026-06-16
+
+### Features
+
+- Replace auto-update maintainer with recommend mode
+
 ## [0.1.3] - 2026-06-16
 
 ### Bug Fixes
