@@ -16,9 +16,6 @@ export const DEFAULT_MAX_CONTEXT_CHARS = 40_000;
 /** Default number of lines to show from the maintainer log tail. */
 export const DEFAULT_MAINTAINER_LOG_LINES = 100;
 
-/** Default maximum number of concurrent maintainer runs per project. */
-export const DEFAULT_MAINTAINER_CONCURRENCY = 1;
-
 /** YAML frontmatter delimiter used by parser and the create_rule tool. */
 export const FRONTMATTER_DELIMITER = "---";
 

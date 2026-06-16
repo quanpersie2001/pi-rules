@@ -42,7 +42,7 @@ summary: Global
 		const status = harness.statuses.get("pi-rules");
 		expect(status, "session_start should set the pi-rules status").toBeDefined();
 		expect(status?.text).toContain("pi-rules");
-		expect(status?.text).toContain("1 active");
+		expect(status?.text).toContain("1 rules");
 	});
 
 	it("injects always-apply rules into the system prompt on before_agent_start", async () => {

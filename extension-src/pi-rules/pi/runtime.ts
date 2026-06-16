@@ -1,8 +1,8 @@
 import type { PiRulesConfig } from "../app/config.js";
 import { createRuntimeState, type RuntimeState } from "../app/state.js";
 import { RulesEngine } from "../domain/engine.js";
-import { MaintainerService } from "../features/maintainer.js";
-import { MaintenanceQueue } from "../features/maintenance-queue.js";
+import { RecommendationStore } from "../features/recommendation-store.js";
+import { RecommenderService } from "../features/recommender-service.js";
 import { findProjectRoot, normalizePath } from "../shared/path.js";
 
 /**
@@ -15,8 +15,8 @@ export interface RuntimeDeps {
 	config: PiRulesConfig;
 	state: RuntimeState;
 	engine: RulesEngine;
-	queue: MaintenanceQueue;
-	maintainer: MaintainerService;
+	store: RecommendationStore;
+	recommender: RecommenderService;
 }
 
 /**
@@ -25,16 +25,18 @@ export interface RuntimeDeps {
  */
 export function createRuntime(cwd: string, config: PiRulesConfig): RuntimeDeps {
 	const projectRoot = findProjectRoot(cwd) ?? cwd;
-	const queue = new MaintenanceQueue(projectRoot);
+	const engine = new RulesEngine({
+		maxRuleChars: config.maxRuleChars,
+		maxContextChars: config.maxContextChars,
+	});
+	const store = new RecommendationStore(projectRoot);
+	const recommender = new RecommenderService(projectRoot, store, engine);
 	return {
 		config,
 		state: createRuntimeState(projectRoot),
-		engine: new RulesEngine({
-			maxRuleChars: config.maxRuleChars,
-			maxContextChars: config.maxContextChars,
-		}),
-		queue,
-		maintainer: new MaintainerService(projectRoot, queue, config.maintainerConcurrency),
+		engine,
+		store,
+		recommender,
 	};
 }
 

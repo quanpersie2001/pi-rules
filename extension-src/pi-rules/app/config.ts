@@ -1,18 +1,12 @@
-import {
-	DEFAULT_MAINTAINER_CONCURRENCY,
-	DEFAULT_MAINTAINER_LOG_LINES,
-	DEFAULT_MAX_CONTEXT_CHARS,
-	DEFAULT_MAX_RULE_CHARS,
-} from "./constants.js";
+import { DEFAULT_MAINTAINER_LOG_LINES, DEFAULT_MAX_CONTEXT_CHARS, DEFAULT_MAX_RULE_CHARS } from "./constants.js";
 
 export type PiRulesMode = "static" | "dynamic" | "both" | "off";
 
 export interface PiRulesConfig {
 	disabled: boolean;
 	mode: PiRulesMode;
-	maintainerEnabled: boolean;
+	recommendationEnabled: boolean;
 	widgetEnabled: boolean;
-	maintainerConcurrency: number;
 	maxRuleChars: number;
 	maxContextChars: number;
 	maintainerLogLines: number;
@@ -21,9 +15,8 @@ export interface PiRulesConfig {
 export const DEFAULT_CONFIG: PiRulesConfig = {
 	disabled: false,
 	mode: "both",
-	maintainerEnabled: true,
+	recommendationEnabled: true,
 	widgetEnabled: true,
-	maintainerConcurrency: DEFAULT_MAINTAINER_CONCURRENCY,
 	maxRuleChars: DEFAULT_MAX_RULE_CHARS,
 	maxContextChars: DEFAULT_MAX_CONTEXT_CHARS,
 	maintainerLogLines: DEFAULT_MAINTAINER_LOG_LINES,
@@ -32,7 +25,7 @@ export const DEFAULT_CONFIG: PiRulesConfig = {
 export function readConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Partial<PiRulesConfig> {
 	return {
 		disabled: env.PI_RULES_DISABLED === "1",
-		maintainerEnabled: env.PI_RULES_MAINTAINER_DISABLED === "1" ? false : undefined,
+		recommendationEnabled: env.PI_RULES_RECOMMENDATIONS_DISABLED === "1" ? false : undefined,
 		maxRuleChars: parsePositiveInteger(env.PI_RULES_MAX_RULE_CHARS),
 		maxContextChars: parsePositiveInteger(env.PI_RULES_MAX_CONTEXT_CHARS),
 		maintainerLogLines: parsePositiveInteger(env.PI_RULES_MAINTAINER_LOG_LINES),

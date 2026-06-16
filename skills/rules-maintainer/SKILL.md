@@ -7,9 +7,18 @@ disable-model-invocation: true
 
 # rules-maintainer
 
-You maintain the `.pi/rules/` documentation system. After a file has been edited, you decide if the change is significant enough to require a rules update, and if so, apply it.
+You maintain the `.pi/rules/` documentation system. You are invoked for **one specific rule file** at a time — the prompt specifies which rule file to update and which source files changed. Focus only on that rule.
 
 You do not write application code. You only update rules files.
+
+> **Invocation model:** This skill is called per-rule, not in batch. The recommender service spawns a separate instance of this skill for each rule that has a pending recommendation. You will receive a prompt like:
+>
+> ```
+> Update the rule file at /path/to/.pi/rules/api/auth.md
+> based on these changed source files: src/api/auth/login.ts, src/api/auth/session.ts.
+> The rule applies to paths matching its frontmatter.
+> Review the changed files and update the rule content if needed.
+> ```
 
 ## Source → Rules Mapping
 
@@ -63,29 +72,25 @@ This approach works regardless of the project's folder structure.
 
 ## Workflow
 
-### Step 1 — Identify changed files
+### Step 1 — Parse the prompt
 
-If the prompt includes a "Files edited this turn:" section, use those paths as your candidate list.
+The prompt specifies:
+- **The rule file** to update (e.g., `Update the rule file at /path/to/.pi/rules/api/auth.md`)
+- **The changed source files** (e.g., `based on these changed source files: src/a.ts, src/b.ts`)
 
-If that section is absent, fall back to `git diff --name-only HEAD` and filter to source files that could be covered by `.pi/rules/**/*.md` frontmatter.
+Extract the rule file path and the list of changed source files from the prompt. These are your only inputs — do not scan for additional changes.
 
-Process each candidate file in sequence through Steps 2–6 below.
+### Step 2 — Read the rule file
 
-### Step 2 — Find the matching rules file
-
-List `.pi/rules/**/*.md` and read frontmatter to find the most specific match for the changed file's path. If no match, stop silently.
+Read the specified `.pi/rules/` file to understand what is currently documented. Check its `paths:` frontmatter to confirm the changed files fall within its scope. If they don't, stop silently.
 
 ### Step 3 — Assess significance
 
-Read the changed source file. Determine whether the change clears the significance threshold above.
+Read each changed source file. Determine whether the changes clear the significance threshold above.
 
-If it does not, stop silently — do not report anything.
+If none of the changes are significant, stop silently — do not report anything.
 
-### Step 4 — Read the current rules or inventory file
-
-Read the matched `.pi/rules/` file so you know what's already documented. If both a `kind: rules` file and sibling `kind: inventory` file match, update the inventory for item additions/removals and update rules only for meaningful convention or architecture changes.
-
-### Step 5 — Apply the minimal update
+### Step 4 — Apply the minimal update
 
 Edit only the part of the rules file that needs to change:
 
@@ -95,15 +100,28 @@ Edit only the part of the rules file that needs to change:
 -   Do not add implementation details — rules files describe _when_ and _what_, not _how_
 -   Keep entries as short as the existing style in that file
 
-### Step 6 — Report
+If both a `kind: rules` file and sibling `kind: inventory` file match, update the inventory for item additions/removals and update rules only for meaningful convention or architecture changes.
 
-After processing all files, output one line per rules file that was updated:
+### Step 5 — Report
+
+Output a single result line in this exact format:
 
 ```
-✏️ Updated .pi/rules/<path> — <what changed in 5 words or fewer>
+RESULT: <status> | <rule-path> | <summary>
 ```
 
-If all files were skipped, output nothing.
+Where `<status>` is one of:
+- `updated` — the rule file was modified
+- `skipped` — changes were not significant enough
+- `no-match` — the changed files don't fall within the rule's scope
+
+Example output:
+
+```
+RESULT: updated | .pi/rules/api/auth.md | added withAuth() wrapper convention
+```
+
+If the status is `skipped` or `no-match`, the summary should briefly explain why.
 
 ## Decision Framework (TH1–TH4)
 
@@ -113,7 +131,7 @@ When you determine a change is significant, choose the appropriate action:
 
 The convention is already documented and hasn't changed.
 
-**Action:** No changes needed. Skip silently.
+**Action:** No changes needed. Output `RESULT: skipped`.
 
 ### TH2: Rule exists, convention has changed
 
@@ -215,22 +233,23 @@ Use ISO 8601 timestamps. Keep log entries to one line each.
 
 ## Concrete Example Flow
 
-**Scenario:** You observe changes to 3 API handler files.
+**Scenario:** You are invoked with:
 
 ```
-Changed: src/api/handlers/users.ts, src/api/handlers/orders.ts, src/api/handlers/products.ts
+Update the rule file at .pi/rules/api/handlers.md
+based on these changed source files: src/api/handlers/users.ts, src/api/handlers/orders.ts, src/api/handlers/products.ts.
 ```
 
-**Step 1 — Read the files:**
+**Step 1 — Read the rule file:**
 
-All three files:
+`.pi/rules/api/handlers.md` has `paths: ["src/api/handlers/**/*.ts"]` and currently documents handler conventions.
+
+**Step 2 — Read the changed files:**
+
+All three files now:
 - Export `async function handle*()`
 - Wrap handlers with `withAuth()`
 - Use Joi schema validation for request body
-
-**Step 2 — Check existing rules:**
-
-- `rules/api.md` has `paths: ["src/api/**/*.ts"]` but doesn't mention `withAuth()` or validation patterns.
 
 **Step 3 — Assess significance:**
 
@@ -238,30 +257,20 @@ All three files:
 - Occurrences: 3 files → meets ≥3 threshold
 - This is a new convention worth documenting
 
-**Step 4 — Decision: TH3**
+**Step 4 — Decision: TH2**
 
-No existing rule covers this pattern. Create new rule:
+The rule exists but doesn't mention `withAuth()` or validation patterns. Update the rule body to add these conventions.
 
-```yaml
----
-paths: ["src/api/handlers/**/*.ts"]
-summary: API handler authentication and validation conventions
----
-- Wrap all handlers with `withAuth()` for authentication
-- Validate request body with Joi schema before processing
-- Return 400 with error details on validation failure
-```
-
-**Step 5 — Log:**
+**Step 5 — Report:**
 
 ```
-[2026-06-15T10:30:00Z] Observed: withAuth() + Joi validation in 3 handlers → created rules/api-handlers.md
+RESULT: updated | .pi/rules/api/handlers.md | added withAuth() and Joi validation conventions
 ```
 
 **What if only 2 files had this pattern?**
 
 ```
-[2026-06-15T10:30:00Z] Observed: withAuth() + Joi validation in 2 handlers → skipped (only 2 occurrences)
+RESULT: skipped | .pi/rules/api/handlers.md | withAuth() in only 2 files, below threshold
 ```
 
-Wait for the third file to exhibit the pattern before creating the rule.
+Wait for the third file to exhibit the pattern before updating the rule.

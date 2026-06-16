@@ -74,12 +74,11 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		const nextConfig = mergeConfig(readConfigFromEnv(), readFlags(pi));
 		const nextProjectRoot = findProjectRoot(cwd);
 		const projectChanged = nextProjectRoot !== runtime.state.projectRoot;
-		const concurrencyChanged = nextConfig.maintainerConcurrency !== runtime.config.maintainerConcurrency;
 		const limitsChanged =
 			nextConfig.maxRuleChars !== runtime.config.maxRuleChars ||
 			nextConfig.maxContextChars !== runtime.config.maxContextChars;
 
-		if (projectChanged || concurrencyChanged || limitsChanged) {
+		if (projectChanged || limitsChanged) {
 			const previousState = runtime.state;
 			runtime = createRuntime(cwd, nextConfig);
 			for (const path of previousState.recentReadPaths) runtime.state.recentReadPaths.add(path);
@@ -100,7 +99,7 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 
 	pi.on("session_start", async (_event, ctx) => {
 		runtime = createRuntime(ctx.cwd, mergeConfig(readConfigFromEnv(), readFlags(pi)));
-		await runtime.queue.initialize();
+		await runtime.store.initialize();
 		// Use loadRules with forceReload=true at startup to populate cache
 		await runtime.engine.loadRules(ctx.cwd, true);
 		await updateWidget(ctx);
@@ -133,7 +132,7 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		syncRuntime(ctx.cwd);
 		runtime.engine.clearCache();
 		resetTurnState(runtime.state);
-		await runtime.queue.initialize();
+		await runtime.store.initialize();
 		await updateWidget(ctx);
 	});
 
@@ -244,7 +243,7 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 
 	pi.on("agent_end", async (_event, ctx) => {
 		syncRuntime(ctx.cwd);
-		if (runtime.config.disabled || !runtime.config.maintainerEnabled) {
+		if (runtime.config.disabled || !runtime.config.recommendationEnabled) {
 			return undefined;
 		}
 
@@ -255,7 +254,10 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 			return undefined;
 		}
 
-		await runtime.maintainer.startOrQueue(changedPaths, "agent_end");
+		const results = await runtime.recommender.recommend(changedPaths, "agent_end");
+		if (results.length > 0) {
+			ctx.ui.notify(`${results.length} recommendation(s) created/updated. Gõ /pi-rules:status để xem.`, "info");
+		}
 		await updateWidget(ctx);
 		return undefined;
 	});
@@ -327,7 +329,9 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		const ruleCount = status?.ruleCount ?? 0;
 		const hasErrors = status?.diagnostics.some((diagnostic) => diagnostic.severity === "error") ?? false;
 
-		ctx.ui.setStatus("pi-rules", statusLineText({ ruleCount, hasErrors }));
+		const stats = await runtime.store.getStats().catch(() => ({ pending: 0 }));
+		const pendingCount = stats.pending ?? 0;
+		ctx.ui.setStatus("pi-rules", statusLineText({ ruleCount, hasErrors, pendingCount }));
 	}
 }
 
@@ -342,8 +346,8 @@ function registerFlags(pi: ExtensionAPI): void {
 		type: "string",
 		default: "both",
 	});
-	pi.registerFlag("pi-rules-maintainer", {
-		description: "Enable background pi-rules maintainer",
+	pi.registerFlag("pi-rules-recommendations", {
+		description: "Enable pi-rules recommendations",
 		type: "boolean",
 		default: true,
 	});
@@ -352,11 +356,6 @@ function registerFlags(pi: ExtensionAPI): void {
 		type: "boolean",
 		default: true,
 	});
-	pi.registerFlag("pi-rules-maintainer-concurrency", {
-		description: "Maximum concurrent pi-rules maintainer runs",
-		type: "string",
-		default: "1",
-	});
 }
 
 function readFlags(pi: ExtensionAPI): Partial<PiRulesConfig> {
@@ -364,20 +363,13 @@ function readFlags(pi: ExtensionAPI): Partial<PiRulesConfig> {
 	return {
 		disabled: pi.getFlag("pi-rules-disabled") === true,
 		mode: isMode(mode) ? mode : undefined,
-		maintainerEnabled: pi.getFlag("pi-rules-maintainer") === true,
+		recommendationEnabled: pi.getFlag("pi-rules-recommendations") === true,
 		widgetEnabled: pi.getFlag("pi-rules-widget") === true,
-		maintainerConcurrency: parsePositiveInteger(pi.getFlag("pi-rules-maintainer-concurrency")),
 	};
 }
 
 function isMode(value: unknown): value is PiRulesMode {
 	return value === "static" || value === "dynamic" || value === "both" || value === "off";
-}
-
-function parsePositiveInteger(value: unknown): number | undefined {
-	if (typeof value !== "string") return undefined;
-	const parsed = Number.parseInt(value, 10);
-	return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function trackToolPaths(state: RuntimeState, event: ToolResultEvent, extractedPaths: string[]): void {

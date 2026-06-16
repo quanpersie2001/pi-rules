@@ -7,12 +7,13 @@ export interface BannerInput {
 	projectRoot: string;
 	changedPathsCount: number;
 	lastInjectedCount: number;
-	maintainerRunsCount: number;
+	pendingCount: number;
 }
 
 export interface StatusLineInput {
 	ruleCount: number;
 	hasErrors: boolean;
+	pendingCount: number;
 }
 
 /**
@@ -27,7 +28,8 @@ export function renderBannerLines(input: BannerInput): string[] {
  * Build the compact status line used by `ctx.ui.setStatus`.
  * Appends an error indicator when the engine has produced error-level diagnostics.
  */
-export function statusLineText({ ruleCount, hasErrors }: StatusLineInput): string {
-	const base = `pi-rules: ${ruleCount} active`;
-	return hasErrors ? `${base} (!)` : base;
+export function statusLineText({ ruleCount, hasErrors, pendingCount }: StatusLineInput): string {
+	const base = `pi-rules: ${ruleCount} rules ✓`;
+	const withPending = pendingCount > 0 ? `${base} | ${pendingCount} pending` : base;
+	return hasErrors ? `${withPending} (!)` : withPending;
 }
