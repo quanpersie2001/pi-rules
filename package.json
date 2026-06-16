@@ -48,7 +48,6 @@
     "depcruise": "depcruise extension-src/pi-rules --config dependency-cruiser.config.cjs",
     "check": "npm run typecheck && npm run lint && npm run depcruise && npm test && npm run build"
   },
-  "dependencies": {},
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
@@ -59,6 +58,7 @@
     "@biomejs/biome": "^2.5.0",
     "@types/node": "^24.0.0",
     "dependency-cruiser": "^17.4.3",
+    "git-cliff": "^2.13.1",
     "tsup": "^8.5.0",
     "typescript": "^5.8.3",
     "vitest": "^4.1.8"

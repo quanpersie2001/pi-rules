@@ -38,21 +38,33 @@ jobs:
       - name: Full check
         run: npm run check
 
-      - name: Bump version
+      - name: Bump version and update changelog
         id: bump
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -- .
+          set -e
+
+          # Bump version in package.json only (no commit/tag yet)
           if [ "${{ inputs.version }}" = "alpha" ]; then
-            npm version prerelease --preid=alpha --no-push
+            npm version prerelease --preid=alpha --no-git-tag-version
           elif [ "${{ inputs.version }}" = "beta" ]; then
-            npm version prerelease --preid=beta --no-push
+            npm version prerelease --preid=beta --no-git-tag-version
           else
-            npm version ${{ inputs.version }} --no-push
+            npm version ${{ inputs.version }} --no-git-tag-version
           fi
+
           VERSION=$(node -p 'require("./package.json").version')
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
+          # Generate changelog
+          npx git-cliff -o CHANGELOG.md --tag "v$VERSION"
+
+          # Commit and tag
+          git add package.json CHANGELOG.md
+          git commit -m "v$VERSION"
+          git tag "v$VERSION"
           git push --follow-tags
 
       - name: Generate release notes
