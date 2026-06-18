@@ -412,10 +412,74 @@ function diffGitStatus(before: string, after: string): string[] {
 		.filter((line) => line.length > 0);
 }
 
+const KNOWN_ROOT_CONFIG_FILES = new Set([
+	"Dockerfile",
+	"Makefile",
+	"Gemfile",
+	"Rakefile",
+	"docker-compose.yml",
+	"docker-compose.yaml",
+	"docker-compose.dev.yml",
+]);
+
+const ROOT_CONFIG_EXTENSIONS = new Set([".json", ".md", ".yaml", ".yml", ".toml", ".cfg", ".ini", ".lock", ".conf"]);
+
+const EXCLUDED_DIR_PREFIXES = [
+	".git/",
+	"node_modules/",
+	".pi/",
+	".ralph/",
+	".github/",
+	".vscode/",
+	".idea/",
+	"dist/",
+	"build/",
+	".next/",
+	"coverage/",
+];
+
+/**
+ * Check whether a single-token path (no "/") is a recognised root-level
+ * project file (e.g. package.json, .gitignore, Dockerfile), as opposed to
+ * noise such as namespace names (BuildingBlocks.Cqrs) or bare extensions.
+ */
+function isRootProjectFile(path: string): boolean {
+	if (KNOWN_ROOT_CONFIG_FILES.has(path)) return true;
+
+	// Hidden dotfiles: .env, .gitignore, .editorconfig, etc.
+	if (path.startsWith(".") && !path.includes("/")) return true;
+
+	// Known config extensions
+	const ext = path.slice(path.lastIndexOf("."));
+	if (ROOT_CONFIG_EXTENSIONS.has(ext)) return true;
+
+	// Common JS/TS project root files
+	if (ext === ".js" && (path.endsWith(".config.js") || path.endsWith(".eslintrc.js"))) return true;
+	if (ext === ".ts" && path.endsWith(".config.ts")) return true;
+	if (ext === ".cjs" && (path.endsWith(".config.cjs") || path.endsWith(".eslintrc.cjs"))) return true;
+
+	return false;
+}
+
 function filterMaintainedPaths(paths: string[]): string[] {
-	return paths.filter(
-		(path) => !path.startsWith(".git/") && !path.startsWith("node_modules/") && !path.startsWith(".pi/.pi-rules/"),
-	);
+	return paths.filter((path) => {
+		// Skip empty / too short
+		if (path.length < 2) return false;
+
+		// Skip paths in excluded directories
+		if (EXCLUDED_DIR_PREFIXES.some((prefix) => path.startsWith(prefix))) return false;
+
+		// Skip paths with only special characters
+		if (!/[a-zA-Z0-9]/.test(path)) return false;
+
+		// Skip shell-noise prefixes (belt-and-suspenders after isValidPathToken)
+		if (/^[&|;,:`$#]/.test(path)) return false;
+
+		// Single-token paths (no "/") must be recognised project files
+		if (!path.includes("/") && !isRootProjectFile(path)) return false;
+
+		return true;
+	});
 }
 
 function dedupePaths(paths: Iterable<string>): string[] {

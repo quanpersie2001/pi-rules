@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { relative, resolve } from "node:path";
 import type { RulesEngine } from "../domain/engine.js";
 import { normalizePath } from "../shared/path.js";
-import { RecommendationStore } from "./recommendation-store.js";
+import { computeExtensionSummary, type RecommendationStore } from "./recommendation-store.js";
 import type { ApplyResult, Recommendation } from "./recommendation-types.js";
 
 export class RecommenderService {
@@ -37,6 +37,8 @@ export class RecommenderService {
 					rulePath: ruleAbsPath,
 					ruleRelativePath: normalizePath(ruleRelPath),
 					changedFiles: normalizedPaths,
+					fileCount: normalizedPaths.length,
+					extensionSummary: computeExtensionSummary(normalizedPaths),
 					reason,
 					status: "pending",
 				});

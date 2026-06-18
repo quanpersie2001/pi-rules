@@ -47,33 +47,16 @@ describe("pi-rules commands", () => {
 		expect(harness.userMessages[0]?.options).toEqual({ deliverAs: "followUp" });
 	});
 
-	it("pi-rules:maintain with no args notifies a usage warning", async () => {
-		const projectDir = makeTempProject("maintain-empty");
+	it("pi-rules:init forwards extra args to the skill", async () => {
+		const projectDir = makeTempProject("init-args");
 		const harness = createFakePi();
 		piRulesExtension(harness.pi);
-		const ctx = harness.makeCommandCtx({ cwd: projectDir });
+		const ctx = harness.makeCommandCtx({ cwd: projectDir, isIdle: () => true });
 
-		await harness.invokeCommand("pi-rules:maintain", "", ctx);
-		await harness.invokeCommand("pi-rules:maintain", "   ", ctx);
+		await harness.invokeCommand("pi-rules:init", "Port exactly rule from @.claude/rules", ctx);
 
-		expect(harness.notifications).toHaveLength(2);
-		expect(harness.notifications[0]?.severity).toBe("warning");
-		expect(harness.notifications[0]?.message).toMatch(/Usage:/);
-		expect(harness.notifications[0]?.message).toContain("/pi-rules:maintain");
-		expect(harness.notifications[1]?.severity).toBe("warning");
-	});
-
-	it("pi-rules:maintain with valid args creates recommendations", async () => {
-		const projectDir = makeTempProject("maintain-recs");
-		const harness = createFakePi();
-		piRulesExtension(harness.pi);
-		const ctx = harness.makeCommandCtx({ cwd: projectDir });
-
-		await harness.invokeCommand("pi-rules:maintain", "src/foo.ts src/bar.ts", ctx);
-
-		expect(harness.notifications).toHaveLength(1);
-		expect(harness.notifications[0]?.severity).toBe("info");
-		expect(harness.notifications[0]?.message).toMatch(/recommendation\(s\) created\/updated/);
+		expect(harness.userMessages).toHaveLength(1);
+		expect(harness.userMessages[0]?.content).toBe("/skill:init-advanced Port exactly rule from @.claude/rules");
 	});
 
 	it("pi-rules:status notifies formatted project status", async () => {

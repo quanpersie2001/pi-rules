@@ -86,6 +86,8 @@ export class RecommendationStore {
 			existingFiles.add(file);
 		}
 		rec.changedFiles = [...existingFiles].sort((left, right) => left.localeCompare(right));
+		rec.fileCount = rec.changedFiles.length;
+		rec.extensionSummary = computeExtensionSummary(rec.changedFiles);
 		rec.updatedAt = now();
 		rec.mergeCount += 1;
 		await this.writeState(state);
@@ -189,4 +191,25 @@ export class RecommendationStore {
 		}
 		return content.split(/\r?\n/).slice(-lineCount).join("\n");
 	}
+}
+
+/**
+ * Build a human-readable summary of file extensions in a path list.
+ * Example: "15 files: 12 .cs, 2 .csproj, 1 .sln"
+ */
+export function computeExtensionSummary(paths: string[]): string {
+	if (paths.length === 0) return "0 files";
+
+	const extCounts = new Map<string, number>();
+	for (const path of paths) {
+		const dotIndex = path.lastIndexOf(".");
+		const ext = dotIndex > 0 && path.indexOf("/", dotIndex) === -1 ? path.slice(dotIndex) : "(other)";
+		extCounts.set(ext, (extCounts.get(ext) ?? 0) + 1);
+	}
+
+	const parts = [...extCounts.entries()]
+		.sort(([a], [b]) => a.localeCompare(b))
+		.map(([ext, count]) => `${count} ${ext}`);
+
+	return `${paths.length} file${paths.length > 1 ? "s" : ""}: ${parts.join(", ")}`;
 }

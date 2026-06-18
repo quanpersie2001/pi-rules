@@ -1,8 +1,10 @@
+import { readFile } from "node:fs/promises";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { InjectionRecord, RuleStatus } from "../domain/types.js";
+import { computeExtensionSummary } from "../features/recommendation-store.js";
 import { toIsoDate } from "../shared/time.js";
 import { runDoctor } from "./doctor.js";
-import { normalizeCandidatePath, type RuntimeDeps } from "./runtime.js";
+import type { RuntimeDeps } from "./runtime.js";
 
 /**
  * Runtime surface required by the slash commands. `getRuntime` returns the
@@ -24,35 +26,15 @@ export interface CommandRuntime {
  */
 export function registerCommands(pi: ExtensionAPI, runtime: CommandRuntime): void {
 	pi.registerCommand("pi-rules:init", {
-		description: "Invoke the init-advanced skill",
-		handler: async (_args, ctx) => {
-			if (ctx.isIdle()) {
-				pi.sendUserMessage("/skill:init-advanced");
-			} else {
-				pi.sendUserMessage("/skill:init-advanced", { deliverAs: "followUp" });
-			}
-		},
-	});
-
-	pi.registerCommand("pi-rules:maintain", {
-		description: "Create recommendation for specified files",
+		description: "Invoke the init-advanced skill with optional prompt",
 		handler: async (args, ctx) => {
-			runtime.syncRuntime(ctx.cwd);
-			const paths = args
-				.trim()
-				.split(/\s+/)
-				.filter(Boolean)
-				.map(normalizeCandidatePath)
-				.filter((path): path is string => path !== undefined);
-			if (paths.length === 0) {
-				ctx.ui.notify("Usage: /pi-rules:maintain <file1> [file2...]", "warning");
-				return;
+			const extra = args.trim();
+			const message = extra ? `/skill:init-advanced ${extra}` : "/skill:init-advanced";
+			if (ctx.isIdle()) {
+				pi.sendUserMessage(message);
+			} else {
+				pi.sendUserMessage(message, { deliverAs: "followUp" });
 			}
-
-			const current = runtime.getRuntime();
-			const results = await current.recommender.recommend(paths, "manual");
-			ctx.ui.notify(`${results.length} recommendation(s) created/updated.`, "info");
-			await runtime.updateWidget(ctx);
 		},
 	});
 
@@ -181,6 +163,29 @@ export function registerCommands(pi: ExtensionAPI, runtime: CommandRuntime): voi
 			ctx.ui.notify(content || "Recommendations log is empty.", "info");
 		},
 	});
+
+	pi.registerCommand("pi-rules:preview", {
+		description: "Show what changed and why a rule may need updating",
+		handler: async (args, ctx) => {
+			runtime.syncRuntime(ctx.cwd);
+			const id = args.trim();
+			if (!id) {
+				ctx.ui.notify("Usage: /pi-rules:preview <id>", "warning");
+				return;
+			}
+
+			const current = runtime.getRuntime();
+			const rec = await current.store.getById(id);
+			if (rec === undefined) {
+				ctx.ui.notify(`Recommendation ${id} not found.`, "warning");
+				return;
+			}
+
+			const ruleContent = await readFile(rec.rulePath, "utf8").catch(() => undefined);
+			const preview = formatSummaryPreview(rec, ruleContent);
+			ctx.ui.notify(preview, "info");
+		},
+	});
 }
 
 export function formatStatus(status: RuleStatus, pendingCount?: number): string {
@@ -228,6 +233,8 @@ export function formatRecommendationStatus(
 		id: string;
 		ruleRelativePath: string;
 		changedFiles: string[];
+		fileCount?: number;
+		extensionSummary?: string;
 		mergeCount: number;
 		createdAt: number;
 	}>,
@@ -235,12 +242,154 @@ export function formatRecommendationStatus(
 	const lines = ["📋 Pending Recommendations:"];
 	for (const rec of pending) {
 		lines.push(`  [${rec.id}] ${rec.ruleRelativePath}`);
-		lines.push(
-			`    Changed: ${rec.changedFiles.join(", ")}${rec.mergeCount > 1 ? ` (merged ${rec.mergeCount}x)` : ""}`,
-		);
-		lines.push(`    Created: ${toIsoDate(rec.createdAt)}`);
+		const summary = rec.extensionSummary ?? computeExtensionSummary(rec.changedFiles);
+		lines.push(`    📦 ${summary}${rec.mergeCount > 1 ? ` (merged ${rec.mergeCount}x)` : ""}`);
+		lines.push(`    🕐 ${toIsoDate(rec.createdAt)}`);
+	}
+	if (pending.length === 0) {
+		lines.push("  (none)");
 	}
 	lines.push("");
-	lines.push("Use /pi-rules:approve <id> to apply, /pi-rules:cancel <id> to dismiss");
+	lines.push("  /pi-rules:approve <id>   — Apply");
+	lines.push("  /pi-rules:preview <id>   — Preview details");
+	lines.push("  /pi-rules:cancel  <id>   — Dismiss");
+	lines.push("  /pi-rules:approve-all    — Apply all pending");
+	lines.push("  /pi-rules:cancel-all     — Dismiss all pending");
+	return lines.join("\n");
+}
+
+/**
+ * Known "pattern" directory names that signal new conventions in changed files.
+ */
+const PATTERN_DIRS = new Set([
+	"Commands",
+	"Queries",
+	"Handlers",
+	"Validators",
+	"DTOs",
+	"Events",
+	"Services",
+	"Repositories",
+	"Readers",
+	"Results",
+	"Mappers",
+	"Facades",
+	"Requests",
+	"Responses",
+	"Migrations",
+	"Seeding",
+	"Specifications",
+]);
+
+/**
+ * Extract section headings from markdown (lines starting with ## or ###).
+ */
+function extractHeadings(content: string): string[] {
+	return (content.match(/^#{2,3}\s+.*$/gm) ?? []).map((h) => h.replace(/^#+\s*/, ""));
+}
+
+/**
+ * Group changed files by their first meaningful subdirectory.
+ * E.g. "src/Modules/Identity/AccessManagement/Commands/CreateRole.cs"
+ *       → "Identity/AccessManagement/Commands"
+ */
+function groupFilesByPattern(changedFiles: string[]): Map<string, number> {
+	const groups = new Map<string, number>();
+	for (const file of changedFiles) {
+		// Find a known pattern dir in the path
+		const parts = file.split("/");
+		let matched = "";
+		for (let i = 0; i < parts.length; i++) {
+			const part = parts[i];
+			if (part !== undefined && PATTERN_DIRS.has(part)) {
+				matched = parts.slice(Math.max(0, i - 1), i + 1).join("/");
+				break;
+			}
+		}
+		if (matched) {
+			groups.set(matched, (groups.get(matched) ?? 0) + 1);
+		}
+	}
+	return groups;
+}
+
+/**
+ * Detect which patterns in changed files are NOT yet documented in the rule.
+ */
+function findMissingTopics(ruleContent: string | undefined, patternGroups: Map<string, number>): string[] {
+	if (ruleContent === undefined) return [];
+	const headings = extractHeadings(ruleContent).map((h) => h.toLowerCase());
+	const contentLower = ruleContent.toLowerCase();
+	const missing: string[] = [];
+
+	for (const [pattern] of patternGroups) {
+		const parts = pattern.split("/");
+		const dirName = parts[parts.length - 1] ?? "";
+		const dirLower = dirName.toLowerCase();
+		// Check if rule already mentions this pattern
+		if (!headings.some((h) => h.includes(dirLower)) && !contentLower.includes(dirLower)) {
+			missing.push(pattern);
+		}
+	}
+
+	return missing;
+}
+
+/**
+ * Quick summary preview: what changed, why the rule might need updating.
+ * No agent spawn — purely heuristic, instant.
+ */
+export function formatSummaryPreview(
+	rec: {
+		id: string;
+		ruleRelativePath: string;
+		rulePath: string;
+		changedFiles: string[];
+		fileCount: number;
+		extensionSummary: string;
+		reason: string;
+		mergeCount: number;
+		createdAt: number;
+	},
+	ruleContent: string | undefined,
+): string {
+	const lines: string[] = [];
+
+	lines.push("━".repeat(48));
+	lines.push(`  ${rec.ruleRelativePath}`);
+	lines.push(`  ${rec.extensionSummary}`);
+	lines.push("");
+
+	// Group changed files by pattern
+	const groups = groupFilesByPattern(rec.changedFiles);
+
+	if (groups.size > 0) {
+		lines.push("  Các nhóm thay đổi chính:");
+		for (const [dir, count] of [...groups.entries()].sort(([, a], [, b]) => b - a)) {
+			lines.push(`    • ${dir}  (${count} files)`);
+		}
+		lines.push("");
+
+		// Detect missing topics
+		const missing = findMissingTopics(ruleContent, groups);
+		if (missing.length > 0) {
+			lines.push("  ⚠️  Rule hiện tại chưa đề cập đến:");
+			for (const topic of missing) {
+				lines.push(`    - ${topic}`);
+			}
+			lines.push("");
+			lines.push("  ➡️  Có thể cần cập nhật rule để bao gồm các pattern mới.");
+		} else {
+			lines.push("  ✅ Các pattern này đã được rule đề cập.");
+		}
+	} else {
+		lines.push("  Các file thay đổi không thuộc pattern đặc biệt nào.");
+	}
+
+	lines.push("");
+	lines.push("  Dùng /pi-rules:approve để agent tự động cập nhật rule.");
+	lines.push("  Dùng /pi-rules:cancel nếu rule không cần thay đổi.");
+	lines.push("━".repeat(48));
+
 	return lines.join("\n");
 }

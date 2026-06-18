@@ -29,10 +29,10 @@ describe("pi-rules extension registration", () => {
 
 		const expectedCommands = [
 			"pi-rules:init",
-			"pi-rules:maintain",
 			"pi-rules:status",
 			"pi-rules:doctor",
 			"pi-rules:context",
+			"pi-rules:preview",
 			"pi-rules:approve",
 			"pi-rules:approve-all",
 			"pi-rules:cancel",

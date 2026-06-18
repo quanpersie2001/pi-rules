@@ -27,6 +27,8 @@ Every agent session has a finite context window. Documentation an agent doesn't 
 2. **No duplication.** If a fact lives in a child file, the parent must not repeat it. If a fact lives in the parent file, the child file must not repeat it.
 3. **Descriptions are decisions.** Every entry must answer: "When should an agent enter here?" Not just what exists, but _when it's relevant_.
 
+**Important: Do NOT create or update AGENTS.md.** The project's AGENTS.md is maintained separately and should never be overwritten by this skill.
+
 **Path mapping:**
 
 -   Source `src/components/` → Rules `.pi/rules/components/components.md`
@@ -60,11 +62,10 @@ If `<skill-dir>` is not obvious, locate the installed `init-advanced/scripts/sca
 
 ### Step 2 — Plan
 
-List every file to create or update. Example:
+List every file to create or update under `.pi/rules/`. Example:
 
 ```
 I'll create/update:
-  AGENTS.md
   .pi/rules/components/components.md
   .pi/rules/components/common/inventory.md
   .pi/rules/custom-types/custom-types.md
@@ -82,7 +83,7 @@ Proceed?
 
 -   Component directories: read **every** component file only when creating or updating a sibling `inventory.md`. Keep inventories out of the main rules file.
 -   Other directories: read enough to identify patterns, constraints, and non-obvious decisions. You don't need every file — focus on the module's contract and conventions.
--   **Before writing any rules file, read its parent rules file** (and the root AGENTS.md). Facts already documented in a parent must not be repeated in the child — restating them wastes context and creates drift when one gets updated but the other doesn't. The parent is the source of truth for anything cross-cutting.
+-   **Before writing any rules file, read its parent rules file.** Facts already documented in a parent must not be repeated in the child — restating them wastes context and creates drift when one gets updated but the other doesn't. The parent is the source of truth for anything cross-cutting.
 
 ### Step 3.5 — Targeted Interview
 
@@ -123,9 +124,8 @@ Before I write, a few things I couldn't determine from the code:
 
 ### Step 4 — Write Documentation
 
-Use the templates in `assets/` for each file type:
+Use the template in `assets/` for each file type:
 
--   `assets/root-template.md` → for the root `AGENTS.md`
 -   `assets/module-template.md` → for module rules files and sibling inventory files
 
 **Quality checklist before saving each file:**
@@ -136,13 +136,11 @@ Use the templates in `assets/` for each file type:
 -   [ ] Component inventory, if created as sibling `inventory.md`, has an entry for every component in the directory
 -   [ ] Component Usage entries are opinionated — they tell an agent what to do
 -   [ ] As short as possible while still being complete
--   [ ] Root AGENTS.md includes Commands, Environment, Gotchas, and a soft rule to prefer injected `.pi/rules` context before broad source-code exploration
 
 ### Step 5 — Report
 
 ```
 ✅ Created:
-  AGENTS.md
   .pi/rules/components/components.md
   .pi/rules/components/common/inventory.md
 

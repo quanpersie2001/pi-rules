@@ -72,10 +72,13 @@ pi install npm:@quandev104/pi-rules
 /pi-rules:init
 ```
 
-This bootstraps your project with:
+Scans your project and creates path-scoped rules under `.pi/rules/`. AGENTS.md is **not** overwritten — it's maintained separately.
 
-- `AGENTS.md` — root context file with project map
-- `.pi/rules/**/*.md` — path-scoped convention files
+To pass additional instructions to the bootstrapper:
+
+```
+/pi-rules:init Port exactly rule from @.claude/rules
+```
 
 Then write rules as markdown with YAML frontmatter:
 
@@ -131,15 +134,17 @@ kind: rules                    # "rules" | "inventory"
 
 | Command | Description |
 |---------|-------------|
-| `/pi-rules:init` | Bootstrap `.pi/rules/` via the `init-advanced` skill |
+| `/pi-rules:init [...prompt]` | Bootstrap `.pi/rules/` via the `init-advanced` skill (optional prompt forwarded to skill) |
 | `/pi-rules:status` | Show discovered rules, diagnostics, and pending recommendations |
+| `/pi-rules:preview <id>` | Quick heuristic preview: groups changed files by pattern, detects topics missing from rule |
+| `/pi-rules:doctor` | Rule discovery diagnostics report |
 | `/pi-rules:context` | Show last injected rule context |
-| `/pi-rules:maintain <file>...` | Manually trigger rule maintenance |
 | `/pi-rules:approve <id>` | Approve a pending recommendation by ID |
 | `/pi-rules:approve-all` | Approve all pending recommendations |
 | `/pi-rules:cancel <id>` | Cancel a pending recommendation by ID |
 | `/pi-rules:cancel-all` | Cancel all pending recommendations |
 | `/pi-rules:cleanup` | Remove completed/error recommendations older than 24 hours |
+| `/pi-rules:recommendations-log` | Show tail of the maintainer log |
 
 ---
 
@@ -166,18 +171,11 @@ kind: rules                    # "rules" | "inventory"
 
 ### `init-advanced`
 
-Bootstraps `.pi/rules/` for a project. Runs reconnaissance, interviews the developer, and creates AGENTS.md + rule files with proper frontmatter.
+Bootstraps `.pi/rules/` for a project. Runs reconnaissance, interviews the developer (up to 5 questions), and creates rule files with proper frontmatter. AGENTS.md is **not** created or overwritten — it's maintained separately.
 
 ### `rules-maintainer`
 
-Hidden skill (`disable-model-invocation: true`). Invoked per-rule by the recommendation system when a user approves a recommendation. Evaluates significance of changes and applies minimal rule updates. Uses a TH1-TH4 decision framework:
-
-| Threshold | Condition | Action |
-|-----------|-----------|--------|
-| **TH1** | Rule exists, still correct | Skip |
-| **TH2** | Rule exists, convention changed | Update body |
-| **TH3** | No rule, pattern in ≥3 files | Create new rule |
-| **TH4** | No rule, pattern in 1-2 files | Log and monitor |
+Hidden skill (`disable-model-invocation: true`). Invoked per-rule by the recommendation system when a user approves a recommendation. Reads the current rule and changed source files, then rewrites the rule content in-place if needed.
 
 ---
 
@@ -192,6 +190,7 @@ Agent turn completes
   → Changed files are matched to rules via frontmatter paths
   → Recommendation created (or merged into existing pending one)
   → User reviews with /pi-rules:status
+  → User previews with /pi-rules:preview (heuristic, instant)
   → User approves with /pi-rules:approve or /pi-rules:approve-all
   → Rule update agent spawned for approved recommendations
 ```
@@ -200,11 +199,44 @@ Agent turn completes
 
 Each rule file can have at most one pending recommendation at a time. If multiple agent turns change files that match the same rule, the changed files are merged into the existing pending recommendation. This keeps the review queue clean and avoids redundant updates.
 
+### Preview
+
+Before approving, get a heuristic summary with `/pi-rules:preview <id>`:
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  .pi/rules/module-structure.md
+  12 files: 10 .cs, 2 .csproj
+
+  Các nhóm thay đổi chính:
+    • AccessManagement/Commands  (6 files)
+    • AccessManagement/Queries   (4 files)
+
+  ⚠️  Rule hiện tại chưa đề cập đến:
+    - AccessManagement/Commands
+
+  ➡️  Có thể cần cập nhật rule để bao gồm các pattern mới.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+The preview is **instant** — no agent spawn. It groups changed files by known pattern directories (Commands, Queries, Handlers, Facades, etc.) and compares against the rule's existing headings.
+
+### Path filtering
+
+Before creating recommendations, paths are filtered to remove noise:
+
+- Shell redirects (`2>/dev/null`, `&>/tmp`) — filtered at extraction
+- Glob patterns (`*.cs`, `*/Commands/*`) — filtered at extraction
+- Code fragments, bare extensions, version numbers — filtered at extraction
+- Dot-directories (`.ralph/`, `.github/`, `.vscode/`) — excluded from maintenance
+- Namespace-style tokens without directory (`BuildingBlocks.Cqrs`) — excluded
+
 ### Merge behavior
 
 When a new recommendation would target a rule that already has a pending recommendation:
 - The changed files list is merged (deduplicated)
 - The merge count is incremented
+- The `fileCount` and `extensionSummary` are recomputed
 - The existing recommendation ID is preserved
 
 ### Lifecycle
@@ -253,7 +285,7 @@ npm run build       # Build dist/
 npm run typecheck   # TypeScript checking
 npm run lint        # Biome linting
 npm run depcruise   # Dependency boundary check
-npm test            # Vitest (209 tests)
+npm test            # Vitest (217 tests)
 npm run check       # All of the above
 ```
 

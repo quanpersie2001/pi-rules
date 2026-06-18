@@ -5,6 +5,8 @@ export interface Recommendation {
 	rulePath: string;
 	ruleRelativePath: string;
 	changedFiles: string[];
+	fileCount: number;
+	extensionSummary: string;
 	reason: string;
 	status: RecommendationStatus;
 	createdAt: number;

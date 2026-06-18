@@ -19,7 +19,9 @@ export function extractToolPaths(event: ToolResultEvent, projectRoot: string): s
 		const command = event.input.command;
 		if (typeof command === "string") {
 			for (const candidate of extractPathsFromBashCommand(command)) {
-				paths.add(candidate);
+				if (isValidPathToken(candidate)) {
+					paths.add(candidate);
+				}
 			}
 		}
 	}
@@ -38,7 +40,10 @@ export function extractRemovedPaths(command: string, projectRoot: string): strin
 		for (const match of rmMatches) {
 			const path = match.replace(/^rm\s+(?:-[rfiv]+\s+)*/, "").trim();
 			if (path && !path.startsWith("-")) {
-				results.push(toRelativeProjectPath(projectRoot, path));
+				const normalized = normalizePath(path);
+				if (isValidPathToken(normalized)) {
+					results.push(toRelativeProjectPath(projectRoot, normalized));
+				}
 			}
 		}
 	}
@@ -47,7 +52,7 @@ export function extractRemovedPaths(command: string, projectRoot: string): strin
 
 export function extractPromptPaths(prompt: string): string[] {
 	const matches = prompt.match(/(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+|[A-Za-z0-9_.-]+\.[A-Za-z0-9_-]+/g) ?? [];
-	return [...new Set(matches.map((match) => normalizePath(match)))];
+	return [...new Set(matches.map((match) => normalizePath(match)).filter(isValidPathToken))];
 }
 
 function hasPathInput(input: Record<string, unknown>): input is Record<string, unknown> & { path: string } {
@@ -61,7 +66,12 @@ function extractPathsFromBashCommand(command: string): string[] {
 		if (token.startsWith("-") || token.includes("=")) continue;
 		if (!token.includes("/") && !token.includes(".")) continue;
 		const normalized = normalizePath(token.replace(/^['"]|['"]$/g, ""));
-		if (normalized.length > 0 && !normalized.startsWith("/") && !normalized.startsWith("~")) {
+		if (
+			normalized.length > 0 &&
+			!normalized.startsWith("/") &&
+			!normalized.startsWith("~") &&
+			isValidPathToken(normalized)
+		) {
 			results.add(normalized);
 		}
 	}
@@ -72,7 +82,10 @@ function extractPathsFromBashCommand(command: string): string[] {
 		for (const match of rmMatches) {
 			const path = match.replace(/^rm\s+(?:-[rfiv]+\s+)*/, "").trim();
 			if (path && !path.startsWith("-")) {
-				results.add(normalizePath(path));
+				const normalized = normalizePath(path);
+				if (isValidPathToken(normalized)) {
+					results.add(normalized);
+				}
 			}
 		}
 	}
@@ -85,12 +98,61 @@ function extractPathsFromBashCommand(command: string): string[] {
 				.replace(/^mv\s+(?:-[fivnT]+\s+)*/, "")
 				.trim()
 				.split(/\s+/);
-			if (parts.length >= 2) {
-				results.add(normalizePath(parts[0]!));
-				results.add(normalizePath(parts[1]!));
+			for (const part of parts) {
+				const normalized = normalizePath(part);
+				if (isValidPathToken(normalized)) results.add(normalized);
 			}
 		}
 	}
 
 	return [...results];
+}
+
+/**
+ * Validate that a token looks like a real (relative) file path rather than
+ * shell syntax, a glob pattern, a code fragment, or other noise.
+ */
+function isValidPathToken(token: string): boolean {
+	if (token.length === 0) return false;
+
+	// -- Shell redirects --
+	if (token === "/dev/null") return false;
+	if (/^\d*[&|]?>/.test(token)) return false; // 2>/dev/null, &>/tmp, 1>file
+	if (/^[&|]/.test(token)) return false; // &>>, |&
+
+	// -- Glob / wildcard patterns --
+	if (token.includes("*") || token.includes("?") || token.includes("!")) return false;
+
+	// -- Brackets/code fragments --
+	if (/[{}()[\]]/.test(token)) return false;
+
+	// -- Shell variables and shebang --
+	if (token.startsWith("$") || token.startsWith("#!")) return false;
+
+	// -- Leading shell metacharacters --
+	if (/^[&|;,:`]/.test(token)) return false;
+
+	// -- Numbered list items ("1.", "2.") --
+	if (/^\d+\.$/.test(token)) return false;
+
+	// -- Pure version numbers ("1.2.3") --
+	if (/^\d+(\.\d+)+$/.test(token)) return false;
+
+	// -- Bare extensions like ".cs", ".csproj" without a path --
+	if (/^\.[a-zA-Z][a-zA-Z0-9]*$/.test(token) && !token.includes("/")) return false;
+
+	// -- Pure operators ".", "..", "/", "//" --
+	if (/^[./]+$/.test(token)) return false;
+
+	// -- Three or more trailing dots ("file.cs...") --
+	if (/\.{3,}$/.test(token)) return false;
+
+	// -- Must contain at least one alphanumeric character --
+	if (!/[a-zA-Z0-9]/.test(token)) return false;
+
+	// -- Must be at least 2 chars for dot-containing tokens without slash --
+	//    This filters single-char noise like "." while allowing "src/file"
+	if (!token.includes("/") && token.length < 2) return false;
+
+	return true;
 }
