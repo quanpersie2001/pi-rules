@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.5] - 2026-06-19
+
+### Features
+
+- *(pi-rules)* Improve recommendation system with path filtering, preview, and display enhancements
+
 ## [0.1.4] - 2026-06-16
 
 ### Features
