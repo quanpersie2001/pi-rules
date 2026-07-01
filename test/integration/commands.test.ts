@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -12,6 +12,14 @@ function makeTempProject(label: string): string {
 	mkdirSync(resolve(dir, ".pi/rules"), { recursive: true });
 	tempDirs.push(dir);
 	return dir;
+}
+
+function readProjectConfig(projectDir: string): Record<string, unknown> {
+	try {
+		return JSON.parse(readFileSync(resolve(projectDir, ".pi/pi-rules.json"), "utf8")) as Record<string, unknown>;
+	} catch (error) {
+		throw new Error(`Unable to read project config: ${error instanceof Error ? error.message : String(error)}`);
+	}
 }
 
 afterEach(() => {
@@ -57,6 +65,56 @@ describe("pi-rules commands", () => {
 
 		expect(harness.userMessages).toHaveLength(1);
 		expect(harness.userMessages[0]?.content).toBe("/skill:init-advanced Port exactly rule from @.claude/rules");
+	});
+
+	it("pi-rules:mode writes project config from args", async () => {
+		const projectDir = makeTempProject("mode-arg");
+		const harness = createFakePi();
+		piRulesExtension(harness.pi);
+		const ctx = harness.makeCommandCtx({ cwd: projectDir });
+
+		await harness.invokeCommand("pi-rules:mode", "static", ctx);
+
+		const config = readProjectConfig(projectDir);
+		expect(config.mode).toBe("static");
+		expect(harness.notifications[0]?.message).toContain("mode set to static");
+	});
+
+	it("pi-rules:mode opens TUI select when no args are provided", async () => {
+		const projectDir = makeTempProject("mode-tui");
+		const harness = createFakePi();
+		piRulesExtension(harness.pi);
+		const ctx = harness.makeCommandCtx({
+			cwd: projectDir,
+			ui: {
+				...harness.makeCommandCtx().ui,
+				select: async () => "dynamic",
+			},
+		});
+
+		await harness.invokeCommand("pi-rules:mode", "", ctx);
+
+		const config = readProjectConfig(projectDir);
+		expect(config.mode).toBe("dynamic");
+	});
+
+	it("pi-rules:write-guard writes project config from TUI select", async () => {
+		const projectDir = makeTempProject("guard-tui");
+		const harness = createFakePi();
+		piRulesExtension(harness.pi);
+		const ctx = harness.makeCommandCtx({
+			cwd: projectDir,
+			ui: {
+				...harness.makeCommandCtx().ui,
+				select: async () => "Enable write guard",
+			},
+		});
+
+		await harness.invokeCommand("pi-rules:write-guard", "", ctx);
+
+		const config = readProjectConfig(projectDir);
+		expect(config.writeGuardEnabled).toBe(true);
+		expect(harness.notifications[0]?.message).toContain("write guard enabled");
 	});
 
 	it("pi-rules:status notifies formatted project status", async () => {
@@ -142,55 +200,18 @@ summary: G
 		expect(message).toContain("global.md");
 	});
 
-	it("pi-rules:approve with no args notifies a usage warning", async () => {
-		const projectDir = makeTempProject("approve-empty");
+	it("does not register recommendation action commands handled by the TUI", () => {
 		const harness = createFakePi();
 		piRulesExtension(harness.pi);
-		const ctx = harness.makeCommandCtx({ cwd: projectDir });
 
-		await harness.invokeCommand("pi-rules:approve", "", ctx);
-
-		expect(harness.notifications).toHaveLength(1);
-		expect(harness.notifications[0]?.severity).toBe("warning");
-		expect(harness.notifications[0]?.message).toMatch(/Usage:/);
-	});
-
-	it("pi-rules:approve with unknown id notifies not found", async () => {
-		const projectDir = makeTempProject("approve-unknown");
-		const harness = createFakePi();
-		piRulesExtension(harness.pi);
-		const ctx = harness.makeCommandCtx({ cwd: projectDir });
-
-		await harness.invokeCommand("pi-rules:approve", "nonexistent", ctx);
-
-		expect(harness.notifications).toHaveLength(1);
-		expect(harness.notifications[0]?.severity).toBe("warning");
-		expect(harness.notifications[0]?.message).toContain("not found");
-	});
-
-	it("pi-rules:cancel with no args notifies a usage warning", async () => {
-		const projectDir = makeTempProject("cancel-empty");
-		const harness = createFakePi();
-		piRulesExtension(harness.pi);
-		const ctx = harness.makeCommandCtx({ cwd: projectDir });
-
-		await harness.invokeCommand("pi-rules:cancel", "", ctx);
-
-		expect(harness.notifications).toHaveLength(1);
-		expect(harness.notifications[0]?.severity).toBe("warning");
-		expect(harness.notifications[0]?.message).toMatch(/Usage:/);
-	});
-
-	it("pi-rules:cancel-all with no pending notifies dismiss", async () => {
-		const projectDir = makeTempProject("cancelall-empty");
-		const harness = createFakePi();
-		piRulesExtension(harness.pi);
-		const ctx = harness.makeCommandCtx({ cwd: projectDir });
-
-		await harness.invokeCommand("pi-rules:cancel-all", "", ctx);
-
-		expect(harness.notifications).toHaveLength(1);
-		expect(harness.notifications[0]?.severity).toBe("info");
-		expect(harness.notifications[0]?.message).toContain("Cancelled 0 recommendation");
+		expect(harness.commands.map((c) => c.name)).not.toEqual(
+			expect.arrayContaining([
+				"pi-rules:preview",
+				"pi-rules:approve",
+				"pi-rules:approve-all",
+				"pi-rules:cancel",
+				"pi-rules:cancel-all",
+			]),
+		);
 	});
 });

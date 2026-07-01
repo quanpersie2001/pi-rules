@@ -2,9 +2,9 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { type PiRulesMode, writeProjectConfigPatch } from "../app/config.js";
 import type { InjectionRecord, RuleStatus } from "../domain/types.js";
 import type { Recommendation } from "../features/recommendation-types.js";
-import { toIsoDate } from "../shared/time.js";
 import { runDoctor } from "./doctor.js";
 import type { RuntimeDeps } from "./runtime.js";
 
@@ -80,6 +80,42 @@ export function registerCommands(pi: ExtensionAPI, runtime: CommandRuntime): voi
 		},
 	});
 
+	pi.registerCommand("pi-rules:mode", {
+		description: "Set project pi-rules injection mode",
+		handler: async (args, ctx) => {
+			runtime.syncRuntime(ctx.cwd);
+			const currentMode = runtime.getRuntime().config.mode;
+			const requested = args.trim();
+			const selected = isMode(requested) ? requested : await ctx.ui.select("pi-rules mode", modeOptions(currentMode));
+			const mode = parseModeSelection(selected);
+			if (mode === undefined) return;
+
+			const configPath = writeProjectConfigPatch(runtime.getRuntime().state.projectRoot, { mode });
+			runtime.syncRuntime(ctx.cwd);
+			await runtime.updateWidget(ctx);
+			ctx.ui.notify(`pi-rules mode set to ${mode} in ${configPath}`, "info");
+		},
+	});
+
+	pi.registerCommand("pi-rules:write-guard", {
+		description: "Configure project pi-rules write/edit guard",
+		handler: async (args, ctx) => {
+			runtime.syncRuntime(ctx.cwd);
+			const current = runtime.getRuntime();
+			const requested = args.trim().toLowerCase();
+			const selected =
+				parseWriteGuardArg(requested) ??
+				(await ctx.ui.select("pi-rules write guard", guardOptions(current.config.writeGuardEnabled)));
+			const writeGuardEnabled = parseWriteGuardSelection(selected);
+			if (writeGuardEnabled === undefined) return;
+
+			const configPath = writeProjectConfigPatch(current.state.projectRoot, { writeGuardEnabled });
+			runtime.syncRuntime(ctx.cwd);
+			await runtime.updateWidget(ctx);
+			ctx.ui.notify(`pi-rules write guard ${writeGuardEnabled ? "enabled" : "disabled"} in ${configPath}`, "info");
+		},
+	});
+
 	pi.registerCommand("pi-rules:doctor", {
 		description: "Show rule discovery report with diagnostics",
 		handler: async (_args, ctx) => {
@@ -98,109 +134,6 @@ export function registerCommands(pi: ExtensionAPI, runtime: CommandRuntime): voi
 		},
 	});
 
-	pi.registerCommand("pi-rules:preview", {
-		description: "Show the content of a pending recommendation",
-		handler: async (args, ctx) => {
-			runtime.syncRuntime(ctx.cwd);
-			const id = args.trim();
-			if (!id) {
-				ctx.ui.notify("Usage: /pi-rules:preview <id>", "warning");
-				return;
-			}
-
-			const current = runtime.getRuntime();
-			await current.store.initialize();
-			const rec = await current.store.getById(id);
-			if (rec === undefined || rec.status !== "pending") {
-				ctx.ui.notify(`Recommendation ${id} not found.`, "warning");
-				return;
-			}
-
-			const ruleContent = await readFile(rec.rulePath, "utf8").catch(() => undefined);
-			ctx.ui.notify(formatSummaryPreview(rec, ruleContent), "info");
-		},
-	});
-
-	pi.registerCommand("pi-rules:approve", {
-		description: "Approve and apply a recommendation",
-		handler: async (args, ctx) => {
-			runtime.syncRuntime(ctx.cwd);
-			const id = args.trim();
-			if (!id) {
-				ctx.ui.notify("Usage: /pi-rules:approve <id>", "warning");
-				return;
-			}
-
-			const current = runtime.getRuntime();
-			await current.store.initialize();
-			const rec = await current.store.getById(id);
-			if (rec === undefined || rec.status !== "pending") {
-				ctx.ui.notify(`Recommendation ${id} not found.`, "warning");
-				return;
-			}
-
-			await applyRecommendation(current, rec, ctx);
-			await runtime.updateWidget(ctx);
-		},
-	});
-
-	pi.registerCommand("pi-rules:approve-all", {
-		description: "Approve and apply all pending recommendations",
-		handler: async (_args, ctx) => {
-			runtime.syncRuntime(ctx.cwd);
-			const current = runtime.getRuntime();
-			await current.store.initialize();
-			const recs = await current.store.getPending();
-			if (recs.length === 0) {
-				ctx.ui.notify("No pending recommendations.", "info");
-				return;
-			}
-
-			let succeeded = 0;
-			for (const rec of recs) {
-				const ok = await applyRecommendation(current, rec, ctx, false);
-				if (ok) succeeded++;
-			}
-			ctx.ui.notify(`Applied ${succeeded}/${recs.length} recommendation(s).`, "info");
-			await runtime.updateWidget(ctx);
-		},
-	});
-
-	pi.registerCommand("pi-rules:cancel", {
-		description: "Cancel/dismiss a recommendation",
-		handler: async (args, ctx) => {
-			runtime.syncRuntime(ctx.cwd);
-			const id = args.trim();
-			if (!id) {
-				ctx.ui.notify("Usage: /pi-rules:cancel <id>", "warning");
-				return;
-			}
-			const current = runtime.getRuntime();
-			await current.store.initialize();
-			const cancelled = await current.store.cancel(id);
-			ctx.ui.notify(
-				cancelled ? `Cancelled ${id}` : `Recommendation ${id} not found or not pending`,
-				cancelled ? "info" : "warning",
-			);
-			await runtime.updateWidget(ctx);
-		},
-	});
-
-	pi.registerCommand("pi-rules:cancel-all", {
-		description: "Cancel all pending recommendations",
-		handler: async (_args, ctx) => {
-			runtime.syncRuntime(ctx.cwd);
-			const current = runtime.getRuntime();
-			await current.store.initialize();
-			const recs = await current.store.getPending();
-			for (const rec of recs) {
-				await current.store.cancel(rec.id);
-			}
-			ctx.ui.notify(`Cancelled ${recs.length} recommendation(s).`, "info");
-			await runtime.updateWidget(ctx);
-		},
-	});
-
 	pi.registerCommand("pi-rules:cleanup", {
 		description: "Show recommendation storage location",
 		handler: async (_args, ctx) => {
@@ -209,6 +142,37 @@ export function registerCommands(pi: ExtensionAPI, runtime: CommandRuntime): voi
 			ctx.ui.notify(`Recommendations are stored at ${current.store.recommendationsPath}`, "info");
 		},
 	});
+}
+
+const MODES: readonly PiRulesMode[] = ["static", "dynamic", "both", "off"];
+
+function isMode(value: unknown): value is PiRulesMode {
+	return typeof value === "string" && MODES.includes(value as PiRulesMode);
+}
+
+function modeOptions(currentMode: PiRulesMode): string[] {
+	return MODES.map((mode) => (mode === currentMode ? `${mode} (current)` : mode));
+}
+
+function parseModeSelection(selection: string | undefined): PiRulesMode | undefined {
+	const value = selection?.replace(" (current)", "").trim();
+	return isMode(value) ? value : undefined;
+}
+
+function guardOptions(enabled: boolean): string[] {
+	return enabled ? ["Disable write guard", "Keep enabled"] : ["Enable write guard", "Keep disabled"];
+}
+
+function parseWriteGuardArg(value: string): string | undefined {
+	if (["on", "true", "1", "enable", "enabled"].includes(value)) return "Enable write guard";
+	if (["off", "false", "0", "disable", "disabled"].includes(value)) return "Disable write guard";
+	return undefined;
+}
+
+function parseWriteGuardSelection(selection: string | undefined): boolean | undefined {
+	if (selection?.startsWith("Enable") || selection?.startsWith("Keep enabled")) return true;
+	if (selection?.startsWith("Disable") || selection?.startsWith("Keep disabled")) return false;
+	return undefined;
 }
 
 async function applyRecommendation(
@@ -273,28 +237,6 @@ export function formatContext(lastContext: InjectionRecord | undefined): string 
 	return lines.join("\n");
 }
 
-export function formatRecommendationStatus(recs: Recommendation[]): string {
-	const lines = ["📋 Pending Recommendations:"];
-	for (const rec of recs) {
-		lines.push(`  [${rec.id}] ${rec.ruleRelativePath}`);
-		const firstLine = rec.summary.split("\n")[0] ?? "";
-		if (firstLine.length > 0) {
-			lines.push(`    📝 ${firstLine.trim()}`);
-		}
-		lines.push(`    🕐 ${toIsoDate(rec.createdAt)}`);
-	}
-	if (recs.length === 0) {
-		lines.push("  (none)");
-	}
-	lines.push("");
-	lines.push("  /pi-rules:preview <id>   — Show the full content to add");
-	lines.push("  /pi-rules:approve <id>   — Apply (agent writes the rule)");
-	lines.push("  /pi-rules:cancel  <id>   — Dismiss");
-	lines.push("  /pi-rules:approve-all    — Apply all");
-	lines.push("  /pi-rules:cancel-all     — Dismiss all");
-	return lines.join("\n");
-}
-
 /**
  * Quick summary preview: show the content to add and the reason.
  */
@@ -333,62 +275,6 @@ export function formatRecommendationDialog(
 	}
 
 	lines.push("", "---", "After closing this preview, choose Approve / Cancel / Close.");
-	return lines.join("\n");
-}
-
-export function formatSummaryPreview(
-	rec: {
-		id: string;
-		ruleRelativePath: string;
-		rulePath: string;
-		summary: string;
-		content: string;
-		reason: string;
-		createdAt: number;
-	},
-	ruleContent: string | undefined,
-	options: { showCommandHints?: boolean } = {},
-): string {
-	const lines: string[] = [];
-
-	lines.push("━".repeat(48));
-	lines.push(`  ${rec.ruleRelativePath}`);
-	lines.push(`  ${ruleContent !== undefined ? "Rule exists — content to add:" : "New rule — content to write:"}`);
-	lines.push("");
-
-	for (const line of rec.content.split("\n")) {
-		if (line.trim().length > 0) {
-			lines.push(`    ${line}`);
-		} else {
-			lines.push("");
-		}
-	}
-	lines.push("");
-
-	lines.push("  Why:");
-	for (const line of rec.reason.split("\n")) {
-		lines.push(`    ${line}`);
-	}
-	lines.push("");
-
-	if (ruleContent !== undefined) {
-		lines.push("  Current rule content (first lines):");
-		const ruleLines = ruleContent.split("\n");
-		for (const line of ruleLines.slice(0, 10)) {
-			lines.push(`    ${line}`);
-		}
-		if (ruleLines.length > 10) {
-			lines.push("    ...");
-		}
-		lines.push("");
-	}
-
-	if (options.showCommandHints !== false) {
-		lines.push("  Use /pi-rules:approve to apply (agent will update the rule file).");
-		lines.push("  Use /pi-rules:cancel  if no rule change is needed.");
-	}
-	lines.push("━".repeat(48));
-
 	return lines.join("\n");
 }
 
