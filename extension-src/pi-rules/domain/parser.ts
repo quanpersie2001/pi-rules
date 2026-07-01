@@ -36,6 +36,7 @@ function normalizeFrontmatter(
 	if (typeof input.alwaysApply === "boolean") frontmatter.alwaysApply = input.alwaysApply;
 	if (typeof input.description === "string") frontmatter.description = input.description;
 	if (typeof input.priority === "number") frontmatter.priority = input.priority;
+	if (typeof input.guard === "boolean") frontmatter.guard = input.guard;
 
 	frontmatter.paths = normalizeStringOrArray(input.paths, "paths", diagnostics, rulePath);
 	frontmatter.paths = normalizeStringOrArray(input.paths, "paths", diagnostics, rulePath);

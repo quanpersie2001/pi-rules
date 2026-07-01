@@ -6,6 +6,8 @@ export interface RuleFrontmatter {
 	priority?: number;
 	kind?: "rules" | "inventory";
 	triggers?: string[];
+	/** When true, writes/edits to matching files are blocked until this rule has been injected in full. */
+	guard?: boolean;
 }
 
 export interface RuleDiagnostic {

@@ -235,6 +235,15 @@ export class RulesEngine {
 		this.turnState.dynamicInjected.set(scopeKey, set);
 	}
 
+	wasFullInjected(rule: ParsedRule): boolean {
+		const key = staticDedupKey(rule);
+		if (this.turnState.staticInjected.has(key)) return true;
+		for (const injected of this.turnState.dynamicInjected.values()) {
+			if (injected.has(key)) return true;
+		}
+		return false;
+	}
+
 	recordInjection(targetPaths: string[], context: RuleContextResult): InjectionRecord {
 		const record: InjectionRecord = {
 			turnId: createId("turn"),

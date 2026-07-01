@@ -42,6 +42,18 @@ summary: Global rules
 		expect(result.frontmatter.summary).toBe("Global rules");
 	});
 
+	it("parses guard rule", () => {
+		const content = `---
+paths:
+  - "src/**/*.ts"
+guard: true
+summary: Guarded rules
+---
+# Guarded body`;
+		const result = parseRuleFile(makeRuleFile("guarded.md"), content);
+		expect(result.frontmatter.guard).toBe(true);
+	});
+
 	it("parses single string paths", () => {
 		const content = `---
 paths: "src/**/*.ts"
