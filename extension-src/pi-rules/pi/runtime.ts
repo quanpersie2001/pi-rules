@@ -2,7 +2,6 @@ import type { PiRulesConfig } from "../app/config.js";
 import { createRuntimeState, type RuntimeState } from "../app/state.js";
 import { RulesEngine } from "../domain/engine.js";
 import { RecommendationStore } from "../features/recommendation-store.js";
-import { RecommenderService } from "../features/recommender-service.js";
 import { findProjectRoot, normalizePath } from "../shared/path.js";
 
 /**
@@ -16,7 +15,6 @@ export interface RuntimeDeps {
 	state: RuntimeState;
 	engine: RulesEngine;
 	store: RecommendationStore;
-	recommender: RecommenderService;
 }
 
 /**
@@ -30,13 +28,11 @@ export function createRuntime(cwd: string, config: PiRulesConfig): RuntimeDeps {
 		maxContextChars: config.maxContextChars,
 	});
 	const store = new RecommendationStore(projectRoot);
-	const recommender = new RecommenderService(projectRoot, store, engine);
 	return {
 		config,
 		state: createRuntimeState(projectRoot),
 		engine,
 		store,
-		recommender,
 	};
 }
 

@@ -24,8 +24,8 @@ describe("pi-rules extension registration", () => {
 		expect(harness.pi.getFlag("pi-rules-widget")).toBe(true);
 	});
 
-	it("registers exactly 11 commands with the expected names", () => {
-		expect(harness.commands).toHaveLength(11);
+	it("registers exactly 10 commands with the expected names", () => {
+		expect(harness.commands).toHaveLength(10);
 
 		const expectedCommands = [
 			"pi-rules:init",
@@ -38,7 +38,6 @@ describe("pi-rules extension registration", () => {
 			"pi-rules:cancel",
 			"pi-rules:cancel-all",
 			"pi-rules:cleanup",
-			"pi-rules:recommendations-log",
 		];
 		const actualNames = harness.commands.map((c) => c.name).sort();
 		expect(actualNames).toEqual([...expectedCommands].sort());
@@ -49,8 +48,9 @@ describe("pi-rules extension registration", () => {
 		}
 	});
 
-	it("registers exactly 1 tool named 'create_rule'", () => {
-		expect(harness.tools).toHaveLength(1);
-		expect(harness.tools[0]?.name).toBe("create_rule");
+	it("registers exactly 2 tools named 'pi_rules_recommend' and 'create_rule'", () => {
+		expect(harness.tools).toHaveLength(2);
+		const names = harness.tools.map((t) => t.name).sort();
+		expect(names).toEqual(["create_rule", "pi_rules_recommend"]);
 	});
 });

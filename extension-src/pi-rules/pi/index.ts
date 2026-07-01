@@ -69,7 +69,6 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 	let runtime = createRuntime(process.cwd(), mergeConfig(readConfigFromEnv(), readFlags(pi)));
 	let watcher: Watcher | null = null;
 	let reloadInFlight = false;
-
 	function syncRuntime(cwd: string): void {
 		const nextConfig = mergeConfig(readConfigFromEnv(), readFlags(pi));
 		const nextProjectRoot = findProjectRoot(cwd);
@@ -132,7 +131,6 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		syncRuntime(ctx.cwd);
 		runtime.engine.clearCache();
 		resetTurnState(runtime.state);
-		await runtime.store.initialize();
 		await updateWidget(ctx);
 	});
 
@@ -140,7 +138,6 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		syncRuntime(ctx.cwd);
 		runtime.engine.resetTurn();
 		resetTurnState(runtime.state);
-		runtime.state.gitStatusBeforeTurn = await getGitStatus(pi, ctx);
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
@@ -241,33 +238,78 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		};
 	});
 
-	pi.on("agent_end", async (_event, ctx) => {
-		syncRuntime(ctx.cwd);
-		if (runtime.config.disabled || !runtime.config.recommendationEnabled) {
-			return undefined;
-		}
-
-		const gitStatusAfterTurn = await getGitStatus(pi, ctx);
-		const gitChangedPaths = diffGitStatus(runtime.state.gitStatusBeforeTurn, gitStatusAfterTurn);
-		const changedPaths = filterMaintainedPaths(dedupePaths([...runtime.state.recentChangedPaths, ...gitChangedPaths]));
-		if (changedPaths.length === 0) {
-			return undefined;
-		}
-
-		const results = await runtime.recommender.recommend(changedPaths, "agent_end");
-		if (results.length > 0) {
-			ctx.ui.notify(`${results.length} recommendation(s) created/updated. Gõ /pi-rules:status để xem.`, "info");
-		}
-		await updateWidget(ctx);
-		return undefined;
-	});
-
 	pi.on("session_shutdown", async (_event, _ctx) => {
 		if (watcher !== null) {
 			await watcher.stop();
 			watcher = null;
 		}
 		reloadInFlight = false;
+	});
+
+	// ─── Tools ──────────────────────────────────────
+
+	pi.registerTool({
+		name: "pi_rules_recommend",
+		label: "Recommend Rule Update",
+		description:
+			"Recommend that a .pi/rules file should be updated to document a convention, pattern, or architecture decision. Call this when you've identified a convention that should be documented after writing code — the user will review and approve the update later.",
+		promptSnippet: "Recommend updating a .pi/rules file when you identify a convention worth documenting",
+		promptGuidelines: [
+			"After implementing a pattern or convention, use pi_rules_recommend to suggest documenting it in the relevant .pi/rules file.",
+			"Provide clear, specific content describing what should be added or changed in the rule.",
+			"Set rulePath to the matching .pi/rules file (or leave empty if a new rule is needed).",
+			"Do NOT call this for trivial changes — only for meaningful conventions worth documenting.",
+		],
+		parameters: Type.Object({
+			rulePath: Type.String({
+				description:
+					"Relative path to the .pi/rules file to update (e.g. 'architecture/api-routing.md'). Leave empty if a new rule file may be needed.",
+			}),
+			summary: Type.String({
+				description: "Short one-line summary of the recommendation (shown in /pi-rules:status list).",
+			}),
+			content: Type.String({
+				description:
+					"The specific content to add or change in the rule. Be precise — this is what the maintainer agent will write. Include markdown formatting if needed.",
+			}),
+			reason: Type.String({
+				description: "Why this rule update is needed. What convention or pattern was introduced?",
+			}),
+		}),
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<AgentToolResult<{ id: string }>> {
+			syncRuntime(ctx.cwd);
+
+			// Build the absolute rule path
+			let ruleAbsPath: string;
+			let ruleRelativePath: string;
+			if (params.rulePath && params.rulePath.length > 0) {
+				ruleAbsPath = resolve(runtime.state.projectRoot, ".pi/rules", params.rulePath);
+				ruleRelativePath = normalizePath(`.pi/rules/${params.rulePath}`);
+			} else {
+				ruleAbsPath = resolve(runtime.state.projectRoot, ".pi/rules", "(to be determined)");
+				ruleRelativePath = ".pi/rules/(to be determined)";
+			}
+
+			await runtime.store.initialize();
+			const rec = await runtime.store.create({
+				rulePath: ruleAbsPath,
+				ruleRelativePath,
+				summary: params.summary,
+				content: params.content,
+				reason: params.reason,
+				status: "pending",
+			});
+
+			return {
+				content: [
+					{
+						type: "text",
+						text: `Recommendation ${rec.id} created for ${ruleRelativePath}.\nUse /pi-rules:preview ${rec.id} to review.\nUse /pi-rules:approve ${rec.id} to apply.`,
+					},
+				],
+				details: { id: rec.id },
+			};
+		},
 	});
 
 	pi.registerTool({
@@ -318,6 +360,8 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+	// ─── Widget ─────────────────────────────────────
+
 	async function updateWidget(ctx: ExtensionContext): Promise<void> {
 		if (!runtime.config.widgetEnabled) {
 			ctx.ui.setStatus("pi-rules", undefined);
@@ -330,8 +374,7 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		const hasErrors = status?.diagnostics.some((diagnostic) => diagnostic.severity === "error") ?? false;
 
 		const stats = await runtime.store.getStats().catch(() => ({ pending: 0 }));
-		const pendingCount = stats.pending ?? 0;
-		ctx.ui.setStatus("pi-rules", statusLineText({ ruleCount, hasErrors, pendingCount }));
+		ctx.ui.setStatus("pi-rules", statusLineText({ ruleCount, hasErrors, pendingCount: stats.pending ?? 0 }));
 	}
 }
 
@@ -391,95 +434,6 @@ function trackToolPaths(state: RuntimeState, event: ToolResultEvent, extractedPa
 	// Augment the across-turn session memory so that rule matching survives
 	// turn boundaries and `session_compact`. Cap is enforced by `addSessionHotPaths`.
 	addSessionHotPaths(state, extractedPaths);
-}
-
-async function getGitStatus(pi: ExtensionAPI, ctx: ExtensionContext): Promise<string> {
-	try {
-		const result = await pi.exec("git", ["status", "--porcelain"], { cwd: ctx.cwd, signal: ctx.signal });
-		return result.stdout;
-	} catch {
-		return "";
-	}
-}
-
-function diffGitStatus(before: string, after: string): string[] {
-	const beforeSet = new Set(before.split(/\r?\n/).filter(Boolean));
-	return after
-		.split(/\r?\n/)
-		.filter(Boolean)
-		.filter((line) => !beforeSet.has(line))
-		.map((line) => normalizePath(line.slice(3).trim()))
-		.filter((line) => line.length > 0);
-}
-
-const KNOWN_ROOT_CONFIG_FILES = new Set([
-	"Dockerfile",
-	"Makefile",
-	"Gemfile",
-	"Rakefile",
-	"docker-compose.yml",
-	"docker-compose.yaml",
-	"docker-compose.dev.yml",
-]);
-
-const ROOT_CONFIG_EXTENSIONS = new Set([".json", ".md", ".yaml", ".yml", ".toml", ".cfg", ".ini", ".lock", ".conf"]);
-
-const EXCLUDED_DIR_PREFIXES = [
-	".git/",
-	"node_modules/",
-	".pi/",
-	".ralph/",
-	".github/",
-	".vscode/",
-	".idea/",
-	"dist/",
-	"build/",
-	".next/",
-	"coverage/",
-];
-
-/**
- * Check whether a single-token path (no "/") is a recognised root-level
- * project file (e.g. package.json, .gitignore, Dockerfile), as opposed to
- * noise such as namespace names (BuildingBlocks.Cqrs) or bare extensions.
- */
-function isRootProjectFile(path: string): boolean {
-	if (KNOWN_ROOT_CONFIG_FILES.has(path)) return true;
-
-	// Hidden dotfiles: .env, .gitignore, .editorconfig, etc.
-	if (path.startsWith(".") && !path.includes("/")) return true;
-
-	// Known config extensions
-	const ext = path.slice(path.lastIndexOf("."));
-	if (ROOT_CONFIG_EXTENSIONS.has(ext)) return true;
-
-	// Common JS/TS project root files
-	if (ext === ".js" && (path.endsWith(".config.js") || path.endsWith(".eslintrc.js"))) return true;
-	if (ext === ".ts" && path.endsWith(".config.ts")) return true;
-	if (ext === ".cjs" && (path.endsWith(".config.cjs") || path.endsWith(".eslintrc.cjs"))) return true;
-
-	return false;
-}
-
-function filterMaintainedPaths(paths: string[]): string[] {
-	return paths.filter((path) => {
-		// Skip empty / too short
-		if (path.length < 2) return false;
-
-		// Skip paths in excluded directories
-		if (EXCLUDED_DIR_PREFIXES.some((prefix) => path.startsWith(prefix))) return false;
-
-		// Skip paths with only special characters
-		if (!/[a-zA-Z0-9]/.test(path)) return false;
-
-		// Skip shell-noise prefixes (belt-and-suspenders after isValidPathToken)
-		if (/^[&|;,:`$#]/.test(path)) return false;
-
-		// Single-token paths (no "/") must be recognised project files
-		if (!path.includes("/") && !isRootProjectFile(path)) return false;
-
-		return true;
-	});
 }
 
 function dedupePaths(paths: Iterable<string>): string[] {

@@ -1,7 +1,9 @@
+import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { InjectionRecord, RuleStatus } from "../domain/types.js";
-import { computeExtensionSummary } from "../features/recommendation-store.js";
+import type { Recommendation } from "../features/recommendation-types.js";
 import { toIsoDate } from "../shared/time.js";
 import { runDoctor } from "./doctor.js";
 import type { RuntimeDeps } from "./runtime.js";
@@ -20,9 +22,6 @@ export interface CommandRuntime {
 
 /**
  * Register all pi-rules slash commands on the given extension API.
- *
- * The commands are intentionally side-effect-only: they call `syncRuntime` to
- * pick up the latest cwd/config, then delegate to the underlying services.
  */
 export function registerCommands(pi: ExtensionAPI, runtime: CommandRuntime): void {
 	pi.registerCommand("pi-rules:init", {
@@ -43,11 +42,40 @@ export function registerCommands(pi: ExtensionAPI, runtime: CommandRuntime): voi
 		handler: async (_args, ctx) => {
 			runtime.syncRuntime(ctx.cwd);
 			const current = runtime.getRuntime();
+			await current.store.initialize();
 			const status = await current.engine.getStatus(ctx.cwd);
-			const pending = await current.store.getPending();
-			ctx.ui.notify(formatStatus(status, pending.length), "info");
-			if (pending.length > 0) {
-				ctx.ui.notify(formatRecommendationStatus(pending), "info");
+			const recs = await current.store.getPending();
+			ctx.ui.notify(formatStatus(status, recs.length), "info");
+			if (recs.length === 0) {
+				return;
+			}
+
+			const choice = await ctx.ui.select(
+				"Select a rule update recommendation:",
+				recs.map((rec, idx) => `${idx + 1}. [${rec.id}] ${rec.ruleRelativePath} — ${rec.summary.split("\n")[0]}`),
+			);
+			if (!choice) return;
+
+			const match = choice.match(/^\d+\. \[([^\]]+)\]/);
+			const id = match?.[1];
+			if (!id) return;
+			const rec = recs.find((item) => item.id === id);
+			if (!rec) return;
+
+			const ruleContent = await readFile(rec.rulePath, "utf8").catch(() => undefined);
+			await ctx.ui.editor("Rule update preview", formatRecommendationDialog(rec, ruleContent));
+
+			const action = await ctx.ui.select("Action:", [
+				"Approve (apply this recommendation)",
+				"Cancel (dismiss)",
+				"Close",
+			]);
+			if (action?.startsWith("Approve")) {
+				await applyRecommendation(current, rec, ctx);
+			} else if (action?.startsWith("Cancel")) {
+				await current.store.cancel(rec.id);
+				ctx.ui.notify(`Cancelled ${rec.id}`, "info");
+				await runtime.updateWidget(ctx);
 			}
 		},
 	});
@@ -70,6 +98,29 @@ export function registerCommands(pi: ExtensionAPI, runtime: CommandRuntime): voi
 		},
 	});
 
+	pi.registerCommand("pi-rules:preview", {
+		description: "Show the content of a pending recommendation",
+		handler: async (args, ctx) => {
+			runtime.syncRuntime(ctx.cwd);
+			const id = args.trim();
+			if (!id) {
+				ctx.ui.notify("Usage: /pi-rules:preview <id>", "warning");
+				return;
+			}
+
+			const current = runtime.getRuntime();
+			await current.store.initialize();
+			const rec = await current.store.getById(id);
+			if (rec === undefined || rec.status !== "pending") {
+				ctx.ui.notify(`Recommendation ${id} not found.`, "warning");
+				return;
+			}
+
+			const ruleContent = await readFile(rec.rulePath, "utf8").catch(() => undefined);
+			ctx.ui.notify(formatSummaryPreview(rec, ruleContent), "info");
+		},
+	});
+
 	pi.registerCommand("pi-rules:approve", {
 		description: "Approve and apply a recommendation",
 		handler: async (args, ctx) => {
@@ -79,10 +130,16 @@ export function registerCommands(pi: ExtensionAPI, runtime: CommandRuntime): voi
 				ctx.ui.notify("Usage: /pi-rules:approve <id>", "warning");
 				return;
 			}
+
 			const current = runtime.getRuntime();
-			await current.store.approve(id);
-			const result = await current.recommender.apply(id);
-			ctx.ui.notify(result.message, result.success ? "info" : "error");
+			await current.store.initialize();
+			const rec = await current.store.getById(id);
+			if (rec === undefined || rec.status !== "pending") {
+				ctx.ui.notify(`Recommendation ${id} not found.`, "warning");
+				return;
+			}
+
+			await applyRecommendation(current, rec, ctx);
 			await runtime.updateWidget(ctx);
 		},
 	});
@@ -92,17 +149,19 @@ export function registerCommands(pi: ExtensionAPI, runtime: CommandRuntime): voi
 		handler: async (_args, ctx) => {
 			runtime.syncRuntime(ctx.cwd);
 			const current = runtime.getRuntime();
-			const pending = await current.store.getPending();
-			if (pending.length === 0) {
+			await current.store.initialize();
+			const recs = await current.store.getPending();
+			if (recs.length === 0) {
 				ctx.ui.notify("No pending recommendations.", "info");
 				return;
 			}
-			for (const rec of pending) {
-				await current.store.approve(rec.id);
+
+			let succeeded = 0;
+			for (const rec of recs) {
+				const ok = await applyRecommendation(current, rec, ctx, false);
+				if (ok) succeeded++;
 			}
-			const results = await current.recommender.applyAll();
-			const succeeded = results.filter((r) => r.success).length;
-			ctx.ui.notify(`Applied ${succeeded}/${results.length} recommendation(s).`, "info");
+			ctx.ui.notify(`Applied ${succeeded}/${recs.length} recommendation(s).`, "info");
 			await runtime.updateWidget(ctx);
 		},
 	});
@@ -117,10 +176,11 @@ export function registerCommands(pi: ExtensionAPI, runtime: CommandRuntime): voi
 				return;
 			}
 			const current = runtime.getRuntime();
-			const result = await current.store.cancel(id);
+			await current.store.initialize();
+			const cancelled = await current.store.cancel(id);
 			ctx.ui.notify(
-				result ? `Cancelled ${id}` : `Recommendation ${id} not found or not pending`,
-				result ? "info" : "warning",
+				cancelled ? `Cancelled ${id}` : `Recommendation ${id} not found or not pending`,
+				cancelled ? "info" : "warning",
 			);
 			await runtime.updateWidget(ctx);
 		},
@@ -131,61 +191,46 @@ export function registerCommands(pi: ExtensionAPI, runtime: CommandRuntime): voi
 		handler: async (_args, ctx) => {
 			runtime.syncRuntime(ctx.cwd);
 			const current = runtime.getRuntime();
-			const pending = await current.store.getPending();
-			if (pending.length === 0) {
-				ctx.ui.notify("No pending recommendations.", "info");
-				return;
-			}
-			for (const rec of pending) {
+			await current.store.initialize();
+			const recs = await current.store.getPending();
+			for (const rec of recs) {
 				await current.store.cancel(rec.id);
 			}
-			ctx.ui.notify(`Cancelled ${pending.length} recommendation(s).`, "info");
+			ctx.ui.notify(`Cancelled ${recs.length} recommendation(s).`, "info");
 			await runtime.updateWidget(ctx);
 		},
 	});
 
 	pi.registerCommand("pi-rules:cleanup", {
-		description: "Remove old completed/error recommendations",
+		description: "Show recommendation storage location",
 		handler: async (_args, ctx) => {
 			runtime.syncRuntime(ctx.cwd);
 			const current = runtime.getRuntime();
-			const removed = await current.recommender.cleanup();
-			ctx.ui.notify(`Removed ${removed} old recommendation(s).`, "info");
+			ctx.ui.notify(`Recommendations are stored at ${current.store.recommendationsPath}`, "info");
 		},
 	});
+}
 
-	pi.registerCommand("pi-rules:recommendations-log", {
-		description: "Show the tail of the recommendations log",
-		handler: async (_args, ctx) => {
-			runtime.syncRuntime(ctx.cwd);
-			const current = runtime.getRuntime();
-			const content = await current.store.readLogTail(current.config.maintainerLogLines);
-			ctx.ui.notify(content || "Recommendations log is empty.", "info");
-		},
-	});
-
-	pi.registerCommand("pi-rules:preview", {
-		description: "Show what changed and why a rule may need updating",
-		handler: async (args, ctx) => {
-			runtime.syncRuntime(ctx.cwd);
-			const id = args.trim();
-			if (!id) {
-				ctx.ui.notify("Usage: /pi-rules:preview <id>", "warning");
-				return;
-			}
-
-			const current = runtime.getRuntime();
-			const rec = await current.store.getById(id);
-			if (rec === undefined) {
-				ctx.ui.notify(`Recommendation ${id} not found.`, "warning");
-				return;
-			}
-
-			const ruleContent = await readFile(rec.rulePath, "utf8").catch(() => undefined);
-			const preview = formatSummaryPreview(rec, ruleContent);
-			ctx.ui.notify(preview, "info");
-		},
-	});
+async function applyRecommendation(
+	current: RuntimeDeps,
+	rec: Recommendation,
+	ctx: ExtensionContext,
+	notifySuccess = true,
+): Promise<boolean> {
+	await current.store.approve(rec.id);
+	try {
+		await spawnUpdateAgent(rec, current.state.projectRoot);
+		await current.store.markCompleted(rec.id);
+		if (notifySuccess) {
+			ctx.ui.notify(`Applied recommendation ${rec.id}: Updated ${rec.ruleRelativePath}`, "info");
+		}
+		return true;
+	} catch (error) {
+		const errorMessage = error instanceof Error ? error.message : String(error);
+		await current.store.markError(rec.id, errorMessage);
+		ctx.ui.notify(`Failed to apply ${rec.id}: ${errorMessage}`, "error");
+		return false;
+	}
 }
 
 export function formatStatus(status: RuleStatus, pendingCount?: number): string {
@@ -228,168 +273,184 @@ export function formatContext(lastContext: InjectionRecord | undefined): string 
 	return lines.join("\n");
 }
 
-export function formatRecommendationStatus(
-	pending: Array<{
-		id: string;
-		ruleRelativePath: string;
-		changedFiles: string[];
-		fileCount?: number;
-		extensionSummary?: string;
-		mergeCount: number;
-		createdAt: number;
-	}>,
-): string {
+export function formatRecommendationStatus(recs: Recommendation[]): string {
 	const lines = ["📋 Pending Recommendations:"];
-	for (const rec of pending) {
+	for (const rec of recs) {
 		lines.push(`  [${rec.id}] ${rec.ruleRelativePath}`);
-		const summary = rec.extensionSummary ?? computeExtensionSummary(rec.changedFiles);
-		lines.push(`    📦 ${summary}${rec.mergeCount > 1 ? ` (merged ${rec.mergeCount}x)` : ""}`);
+		const firstLine = rec.summary.split("\n")[0] ?? "";
+		if (firstLine.length > 0) {
+			lines.push(`    📝 ${firstLine.trim()}`);
+		}
 		lines.push(`    🕐 ${toIsoDate(rec.createdAt)}`);
 	}
-	if (pending.length === 0) {
+	if (recs.length === 0) {
 		lines.push("  (none)");
 	}
 	lines.push("");
-	lines.push("  /pi-rules:approve <id>   — Apply");
-	lines.push("  /pi-rules:preview <id>   — Preview details");
+	lines.push("  /pi-rules:preview <id>   — Show the full content to add");
+	lines.push("  /pi-rules:approve <id>   — Apply (agent writes the rule)");
 	lines.push("  /pi-rules:cancel  <id>   — Dismiss");
-	lines.push("  /pi-rules:approve-all    — Apply all pending");
-	lines.push("  /pi-rules:cancel-all     — Dismiss all pending");
+	lines.push("  /pi-rules:approve-all    — Apply all");
+	lines.push("  /pi-rules:cancel-all     — Dismiss all");
 	return lines.join("\n");
 }
 
 /**
- * Known "pattern" directory names that signal new conventions in changed files.
+ * Quick summary preview: show the content to add and the reason.
  */
-const PATTERN_DIRS = new Set([
-	"Commands",
-	"Queries",
-	"Handlers",
-	"Validators",
-	"DTOs",
-	"Events",
-	"Services",
-	"Repositories",
-	"Readers",
-	"Results",
-	"Mappers",
-	"Facades",
-	"Requests",
-	"Responses",
-	"Migrations",
-	"Seeding",
-	"Specifications",
-]);
+export function formatRecommendationDialog(
+	rec: {
+		id: string;
+		ruleRelativePath: string;
+		summary: string;
+		content: string;
+		reason: string;
+	},
+	ruleContent: string | undefined,
+): string {
+	const lines = [
+		`# ${rec.summary}`,
+		"",
+		`**Recommendation:** ${rec.id}`,
+		`**Rule file:** ${rec.ruleRelativePath}`,
+		"",
+		"## Proposed rule update",
+		"",
+		...rec.content.split("\n"),
+		"",
+		"## Why this is needed",
+		"",
+		...rec.reason.split("\n"),
+	];
 
-/**
- * Extract section headings from markdown (lines starting with ## or ###).
- */
-function extractHeadings(content: string): string[] {
-	return (content.match(/^#{2,3}\s+.*$/gm) ?? []).map((h) => h.replace(/^#+\s*/, ""));
-}
-
-/**
- * Group changed files by their first meaningful subdirectory.
- * E.g. "src/Modules/Identity/AccessManagement/Commands/CreateRole.cs"
- *       → "Identity/AccessManagement/Commands"
- */
-function groupFilesByPattern(changedFiles: string[]): Map<string, number> {
-	const groups = new Map<string, number>();
-	for (const file of changedFiles) {
-		// Find a known pattern dir in the path
-		const parts = file.split("/");
-		let matched = "";
-		for (let i = 0; i < parts.length; i++) {
-			const part = parts[i];
-			if (part !== undefined && PATTERN_DIRS.has(part)) {
-				matched = parts.slice(Math.max(0, i - 1), i + 1).join("/");
-				break;
-			}
+	if (ruleContent !== undefined) {
+		const ruleLines = ruleContent.split("\n").slice(0, 12);
+		lines.push("", "## Current rule excerpt", "", "```markdown", ...ruleLines);
+		if (ruleContent.split("\n").length > 12) {
+			lines.push("...");
 		}
-		if (matched) {
-			groups.set(matched, (groups.get(matched) ?? 0) + 1);
-		}
-	}
-	return groups;
-}
-
-/**
- * Detect which patterns in changed files are NOT yet documented in the rule.
- */
-function findMissingTopics(ruleContent: string | undefined, patternGroups: Map<string, number>): string[] {
-	if (ruleContent === undefined) return [];
-	const headings = extractHeadings(ruleContent).map((h) => h.toLowerCase());
-	const contentLower = ruleContent.toLowerCase();
-	const missing: string[] = [];
-
-	for (const [pattern] of patternGroups) {
-		const parts = pattern.split("/");
-		const dirName = parts[parts.length - 1] ?? "";
-		const dirLower = dirName.toLowerCase();
-		// Check if rule already mentions this pattern
-		if (!headings.some((h) => h.includes(dirLower)) && !contentLower.includes(dirLower)) {
-			missing.push(pattern);
-		}
+		lines.push("```");
 	}
 
-	return missing;
+	lines.push("", "---", "After closing this preview, choose Approve / Cancel / Close.");
+	return lines.join("\n");
 }
 
-/**
- * Quick summary preview: what changed, why the rule might need updating.
- * No agent spawn — purely heuristic, instant.
- */
 export function formatSummaryPreview(
 	rec: {
 		id: string;
 		ruleRelativePath: string;
 		rulePath: string;
-		changedFiles: string[];
-		fileCount: number;
-		extensionSummary: string;
+		summary: string;
+		content: string;
 		reason: string;
-		mergeCount: number;
 		createdAt: number;
 	},
 	ruleContent: string | undefined,
+	options: { showCommandHints?: boolean } = {},
 ): string {
 	const lines: string[] = [];
 
 	lines.push("━".repeat(48));
 	lines.push(`  ${rec.ruleRelativePath}`);
-	lines.push(`  ${rec.extensionSummary}`);
+	lines.push(`  ${ruleContent !== undefined ? "Rule exists — content to add:" : "New rule — content to write:"}`);
 	lines.push("");
 
-	// Group changed files by pattern
-	const groups = groupFilesByPattern(rec.changedFiles);
+	for (const line of rec.content.split("\n")) {
+		if (line.trim().length > 0) {
+			lines.push(`    ${line}`);
+		} else {
+			lines.push("");
+		}
+	}
+	lines.push("");
 
-	if (groups.size > 0) {
-		lines.push("  Các nhóm thay đổi chính:");
-		for (const [dir, count] of [...groups.entries()].sort(([, a], [, b]) => b - a)) {
-			lines.push(`    • ${dir}  (${count} files)`);
+	lines.push("  Why:");
+	for (const line of rec.reason.split("\n")) {
+		lines.push(`    ${line}`);
+	}
+	lines.push("");
+
+	if (ruleContent !== undefined) {
+		lines.push("  Current rule content (first lines):");
+		const ruleLines = ruleContent.split("\n");
+		for (const line of ruleLines.slice(0, 10)) {
+			lines.push(`    ${line}`);
+		}
+		if (ruleLines.length > 10) {
+			lines.push("    ...");
 		}
 		lines.push("");
-
-		// Detect missing topics
-		const missing = findMissingTopics(ruleContent, groups);
-		if (missing.length > 0) {
-			lines.push("  ⚠️  Rule hiện tại chưa đề cập đến:");
-			for (const topic of missing) {
-				lines.push(`    - ${topic}`);
-			}
-			lines.push("");
-			lines.push("  ➡️  Có thể cần cập nhật rule để bao gồm các pattern mới.");
-		} else {
-			lines.push("  ✅ Các pattern này đã được rule đề cập.");
-		}
-	} else {
-		lines.push("  Các file thay đổi không thuộc pattern đặc biệt nào.");
 	}
 
-	lines.push("");
-	lines.push("  Dùng /pi-rules:approve để agent tự động cập nhật rule.");
-	lines.push("  Dùng /pi-rules:cancel nếu rule không cần thay đổi.");
+	if (options.showCommandHints !== false) {
+		lines.push("  Use /pi-rules:approve to apply (agent will update the rule file).");
+		lines.push("  Use /pi-rules:cancel  if no rule change is needed.");
+	}
 	lines.push("━".repeat(48));
 
 	return lines.join("\n");
+}
+
+/**
+ * Spawn the rules-maintainer skill agent to apply a recommendation.
+ */
+async function spawnUpdateAgent(
+	rec: Pick<Recommendation, "rulePath" | "content" | "reason">,
+	projectRoot: string,
+	timeoutMs = 5 * 60 * 1000,
+): Promise<void> {
+	return new Promise((resolvePromise, reject) => {
+		if (!projectRoot) {
+			reject(new Error("Project root not available"));
+			return;
+		}
+		const skillPath = resolve(projectRoot, "skills/rules-maintainer");
+
+		const prompt = [
+			`Update the rule file at ${rec.rulePath}`,
+			`The following describes what should be reflected in the rule:`,
+			rec.content,
+			`Reason: ${rec.reason}`,
+			`Read the current rule file and apply the changes described above.`,
+			`Do NOT read source files — the content above is the convention to document.`,
+		].join(" ");
+
+		const child = spawn("pi", ["-p", "--skill", skillPath, prompt], {
+			cwd: projectRoot,
+			stdio: "ignore",
+			detached: false,
+		});
+
+		let settled = false;
+
+		child.on("close", (code) => {
+			if (settled) return;
+			settled = true;
+			if (code === 0) {
+				resolvePromise();
+			} else {
+				reject(new Error(`Pi agent exited with code ${code}`));
+			}
+		});
+
+		child.on("error", (error) => {
+			if (settled) return;
+			settled = true;
+			reject(error);
+		});
+
+		const timer = setTimeout(() => {
+			if (settled) return;
+			settled = true;
+			try {
+				process.kill(child.pid ?? -1, "SIGTERM");
+			} catch {
+				// ignore
+			}
+			reject(new Error("Pi agent timed out after 5 minutes"));
+		}, timeoutMs);
+
+		child.on("close", () => clearTimeout(timer));
+	});
 }

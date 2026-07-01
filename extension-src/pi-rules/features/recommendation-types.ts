@@ -4,9 +4,11 @@ export interface Recommendation {
 	id: string;
 	rulePath: string;
 	ruleRelativePath: string;
-	changedFiles: string[];
-	fileCount: number;
-	extensionSummary: string;
+	changedFiles?: string[];
+	fileCount?: number;
+	extensionSummary?: string;
+	summary: string;
+	content: string;
 	reason: string;
 	status: RecommendationStatus;
 	createdAt: number;

@@ -268,7 +268,7 @@ export function createFakePi(): FakePiHarness {
 			ui: makeUiContext(),
 			hasUI: true,
 			cwd: process.cwd(),
-			sessionManager: { listSessions: () => [], getSession: () => undefined },
+			sessionManager: { listSessions: () => [], getSession: () => undefined, getEntries: () => entries },
 			modelRegistry: { listModels: () => [], getModel: () => undefined },
 			model: undefined,
 			isIdle: () => true,

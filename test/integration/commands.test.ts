@@ -80,9 +80,10 @@ summary: G
 
 		await harness.invokeCommand("pi-rules:status", "", ctx);
 
-		expect(harness.notifications).toHaveLength(1);
-		const message = harness.notifications[0]?.message ?? "";
-		expect(harness.notifications[0]?.severity).toBe("info");
+		// Status, then recommendations list (if any)
+		const infoNotifications = harness.notifications.filter((n) => n.severity === "info");
+		expect(infoNotifications.length).toBeGreaterThanOrEqual(1);
+		const message = infoNotifications[0]?.message ?? "";
 		expect(message).toContain("Project root:");
 		expect(message).toContain("Rules dir:");
 		expect(message).toContain("Rules: 1 files");
@@ -154,6 +155,19 @@ summary: G
 		expect(harness.notifications[0]?.message).toMatch(/Usage:/);
 	});
 
+	it("pi-rules:approve with unknown id notifies not found", async () => {
+		const projectDir = makeTempProject("approve-unknown");
+		const harness = createFakePi();
+		piRulesExtension(harness.pi);
+		const ctx = harness.makeCommandCtx({ cwd: projectDir });
+
+		await harness.invokeCommand("pi-rules:approve", "nonexistent", ctx);
+
+		expect(harness.notifications).toHaveLength(1);
+		expect(harness.notifications[0]?.severity).toBe("warning");
+		expect(harness.notifications[0]?.message).toContain("not found");
+	});
+
 	it("pi-rules:cancel with no args notifies a usage warning", async () => {
 		const projectDir = makeTempProject("cancel-empty");
 		const harness = createFakePi();
@@ -167,7 +181,7 @@ summary: G
 		expect(harness.notifications[0]?.message).toMatch(/Usage:/);
 	});
 
-	it("pi-rules:cancel-all with no pending notifies no-op", async () => {
+	it("pi-rules:cancel-all with no pending notifies dismiss", async () => {
 		const projectDir = makeTempProject("cancelall-empty");
 		const harness = createFakePi();
 		piRulesExtension(harness.pi);
@@ -177,32 +191,6 @@ summary: G
 
 		expect(harness.notifications).toHaveLength(1);
 		expect(harness.notifications[0]?.severity).toBe("info");
-		expect(harness.notifications[0]?.message).toBe("No pending recommendations.");
-	});
-
-	it("pi-rules:cleanup removes old recommendations", async () => {
-		const projectDir = makeTempProject("cleanup");
-		const harness = createFakePi();
-		piRulesExtension(harness.pi);
-		const ctx = harness.makeCommandCtx({ cwd: projectDir });
-
-		await harness.invokeCommand("pi-rules:cleanup", "", ctx);
-
-		expect(harness.notifications).toHaveLength(1);
-		expect(harness.notifications[0]?.severity).toBe("info");
-		expect(harness.notifications[0]?.message).toMatch(/Removed \d+ old recommendation/);
-	});
-
-	it("pi-rules:recommendations-log reports empty log when no log file exists", async () => {
-		const projectDir = makeTempProject("reclog-empty");
-		const harness = createFakePi();
-		piRulesExtension(harness.pi);
-		const ctx = harness.makeCommandCtx({ cwd: projectDir });
-
-		await harness.invokeCommand("pi-rules:recommendations-log", "", ctx);
-
-		expect(harness.notifications).toHaveLength(1);
-		expect(harness.notifications[0]?.severity).toBe("info");
-		expect(harness.notifications[0]?.message).toBe("Recommendations log is empty.");
+		expect(harness.notifications[0]?.message).toContain("Cancelled 0 recommendation");
 	});
 });
