@@ -10,10 +10,17 @@ describe("pi-rules extension registration", () => {
 		piRulesExtension(harness.pi);
 	});
 
-	it("registers exactly 4 flags with the expected names and defaults", () => {
-		expect(harness.flags.size).toBe(4);
+	it("registers exactly 6 flags with the expected names and defaults", () => {
+		expect(harness.flags.size).toBe(6);
 
-		const expectedFlags = ["pi-rules-disabled", "pi-rules-mode", "pi-rules-recommendations", "pi-rules-widget"];
+		const expectedFlags = [
+			"pi-rules-disabled",
+			"pi-rules-mode",
+			"pi-rules-recommendations",
+			"pi-rules-widget",
+			"pi-rules-write-guard",
+			"pi-rules-dynamic-injection",
+		];
 		for (const name of expectedFlags) {
 			expect(harness.flags.has(name), `expected flag ${name} to be registered`).toBe(true);
 		}
@@ -22,21 +29,20 @@ describe("pi-rules extension registration", () => {
 		expect(harness.pi.getFlag("pi-rules-mode")).toBe("both");
 		expect(harness.pi.getFlag("pi-rules-recommendations")).toBe(true);
 		expect(harness.pi.getFlag("pi-rules-widget")).toBe(true);
+		expect(harness.pi.getFlag("pi-rules-write-guard")).toBe(false);
+		expect(harness.pi.getFlag("pi-rules-dynamic-injection")).toBe("full");
 	});
 
-	it("registers exactly 10 commands with the expected names", () => {
-		expect(harness.commands).toHaveLength(10);
+	it("registers exactly 7 commands with the expected names", () => {
+		expect(harness.commands).toHaveLength(7);
 
 		const expectedCommands = [
 			"pi-rules:init",
 			"pi-rules:status",
+			"pi-rules:mode",
+			"pi-rules:write-guard",
 			"pi-rules:doctor",
 			"pi-rules:context",
-			"pi-rules:preview",
-			"pi-rules:approve",
-			"pi-rules:approve-all",
-			"pi-rules:cancel",
-			"pi-rules:cancel-all",
 			"pi-rules:cleanup",
 		];
 		const actualNames = harness.commands.map((c) => c.name).sort();

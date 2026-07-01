@@ -170,6 +170,127 @@ summary: TS guidance
 		expect(result).toBeUndefined();
 	});
 
+	it("skips dynamic injection when dynamic injection is off but still tracks read paths", async () => {
+		const projectDir = makeTempProject("dynamic-off");
+		writeFileSync(resolve(projectDir, ".pi/pi-rules.json"), JSON.stringify({ dynamicInjection: "off" }));
+		writeFileSync(
+			resolve(projectDir, ".pi/rules/typescript.md"),
+			`---
+paths:
+  - "src/**/*.ts"
+summary: TS guidance
+---
+# TS body`,
+		);
+
+		const harness = createFakePi();
+		piRulesExtension(harness.pi);
+		const ctx = harness.makeCtx({ cwd: projectDir });
+
+		await harness.emit("session_start", { type: "session_start", reason: "startup" }, ctx);
+
+		const dynamicResult = await harness.emit(
+			"tool_result",
+			{
+				type: "tool_result",
+				toolCallId: "tc-1",
+				toolName: "read",
+				input: { path: "src/handler.ts" },
+				content: [{ type: "text", text: "ok" }],
+				details: undefined,
+				isError: false,
+			},
+			ctx,
+		);
+		expect(dynamicResult).toBeUndefined();
+
+		const staticResult = await harness.emit(
+			"before_agent_start",
+			{
+				type: "before_agent_start",
+				prompt: "",
+				systemPrompt: "Base.",
+				systemPromptOptions: { contextFiles: [] },
+			},
+			ctx,
+		);
+
+		expect(staticResult).toBeDefined();
+		const resultObj = staticResult as { systemPrompt: string };
+		expect(resultObj.systemPrompt).toContain("TS body");
+	});
+
+	it("blocks edit when write guard finds a guarded rule that was not injected", async () => {
+		const projectDir = makeTempProject("write-guard");
+		writeFileSync(resolve(projectDir, ".pi/pi-rules.json"), JSON.stringify({ writeGuardEnabled: true }));
+		writeFileSync(
+			resolve(projectDir, ".pi/rules/typescript.md"),
+			`---
+paths:
+  - "src/**/*.ts"
+summary: TS guidance
+guard: true
+---
+# TS body`,
+		);
+
+		const harness = createFakePi();
+		piRulesExtension(harness.pi);
+		const ctx = harness.makeCtx({ cwd: projectDir });
+
+		await harness.emit("session_start", { type: "session_start", reason: "startup" }, ctx);
+
+		const result = await harness.emit(
+			"tool_call",
+			{
+				type: "tool_call",
+				toolCallId: "tc-1",
+				toolName: "edit",
+				input: { path: "src/handler.ts", edits: [{ oldText: "a", newText: "b" }] },
+			},
+			ctx,
+		);
+
+		expect(result).toEqual(
+			expect.objectContaining({
+				block: true,
+			}),
+		);
+		const resultObj = result as { reason: string };
+		expect(resultObj.reason).toContain("Blocked by pi-rules write guard");
+		expect(resultObj.reason).toContain("TS body");
+	});
+
+	it("allows guarded edit after the rule was injected once by write guard", async () => {
+		const projectDir = makeTempProject("write-guard-dedup");
+		writeFileSync(
+			resolve(projectDir, ".pi/rules/typescript.md"),
+			`---
+paths:
+  - "src/**/*.ts"
+summary: TS guidance
+guard: true
+---
+# TS body`,
+		);
+
+		const harness = createFakePi();
+		harness.flagValues.set("pi-rules-write-guard", true);
+		piRulesExtension(harness.pi);
+		const ctx = harness.makeCtx({ cwd: projectDir });
+
+		await harness.emit("session_start", { type: "session_start", reason: "startup" }, ctx);
+
+		const event = {
+			type: "tool_call",
+			toolCallId: "tc-1",
+			toolName: "edit",
+			input: { path: "src/handler.ts", edits: [{ oldText: "a", newText: "b" }] },
+		};
+		expect(await harness.emit("tool_call", event, ctx)).toBeDefined();
+		expect(await harness.emit("tool_call", { ...event, toolCallId: "tc-2" }, ctx)).toBeUndefined();
+	});
+
 	it("tracks read tool paths in recentReadPaths so a subsequent before_agent_start injects context", async () => {
 		const projectDir = makeTempProject("read-then-inject");
 		writeFileSync(

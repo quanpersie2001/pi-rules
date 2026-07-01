@@ -3,11 +3,23 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { mergeConfig, type PiRulesConfig, type PiRulesMode, readConfigFromEnv } from "../app/config.js";
+import {
+	DEFAULT_CONFIG,
+	mergeConfig,
+	type PiRulesConfig,
+	type PiRulesMode,
+	readConfigFromEnv,
+	readConfigFromFiles,
+} from "../app/config.js";
 import { addSessionHotPaths, type RuntimeState, resetTurnState } from "../app/state.js";
 import { formatRuleContext } from "../domain/formatter.js";
 import type { MatchedRule } from "../domain/types.js";
-import { extractPromptPaths, extractRemovedPaths, extractToolPaths } from "../features/tool-paths.js";
+import {
+	extractPromptPaths,
+	extractRemovedPaths,
+	extractToolPaths,
+	extractWriteToolCallPaths,
+} from "../features/tool-paths.js";
 import { startWatcher, type Watcher } from "../features/watcher.js";
 import { findProjectRoot, normalizePath } from "../shared/path.js";
 import { statusLineText } from "./banner.js";
@@ -66,12 +78,15 @@ function formatMatches(matches: MatchedRule[], runtimeDeps: RuntimeDeps): string
 export default function piRulesExtension(pi: ExtensionAPI): void {
 	registerFlags(pi);
 
-	let runtime = createRuntime(process.cwd(), mergeConfig(readConfigFromEnv(), readFlags(pi)));
+	let runtime = createRuntime(
+		process.cwd(),
+		mergeConfig(readConfigFromFiles(findProjectRoot(process.cwd())), readConfigFromEnv(), readFlags(pi)),
+	);
 	let watcher: Watcher | null = null;
 	let reloadInFlight = false;
 	function syncRuntime(cwd: string): void {
-		const nextConfig = mergeConfig(readConfigFromEnv(), readFlags(pi));
 		const nextProjectRoot = findProjectRoot(cwd);
+		const nextConfig = mergeConfig(readConfigFromFiles(nextProjectRoot), readConfigFromEnv(), readFlags(pi));
 		const projectChanged = nextProjectRoot !== runtime.state.projectRoot;
 		const limitsChanged =
 			nextConfig.maxRuleChars !== runtime.config.maxRuleChars ||
@@ -97,7 +112,8 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
-		runtime = createRuntime(ctx.cwd, mergeConfig(readConfigFromEnv(), readFlags(pi)));
+		const projectRoot = findProjectRoot(ctx.cwd);
+		runtime = createRuntime(ctx.cwd, mergeConfig(readConfigFromFiles(projectRoot), readConfigFromEnv(), readFlags(pi)));
 		await runtime.store.initialize();
 		// Use loadRules with forceReload=true at startup to populate cache
 		await runtime.engine.loadRules(ctx.cwd, true);
@@ -209,6 +225,45 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		};
 	});
 
+	pi.on("tool_call", async (event, ctx) => {
+		syncRuntime(ctx.cwd);
+		if (runtime.config.disabled || runtime.config.mode === "off" || !runtime.config.writeGuardEnabled) {
+			return undefined;
+		}
+
+		const targetPaths = extractWriteToolCallPaths(event, runtime.state.projectRoot);
+		if (targetPaths.length === 0) {
+			return undefined;
+		}
+
+		const context = await runtime.engine.matchRulesForPaths(ctx.cwd, targetPaths);
+		const missingGuardedRules = context.matches.filter(
+			(match) => match.frontmatter.guard === true && !runtime.engine.wasFullInjected(match),
+		);
+		if (missingGuardedRules.length === 0) {
+			return undefined;
+		}
+
+		const prompt = formatMatches(missingGuardedRules, runtime);
+		runtime.engine.markStaticInjectedBatch(missingGuardedRules);
+		runtime.state.lastContext = runtime.engine.recordInjection(targetPaths, {
+			...context,
+			matches: missingGuardedRules,
+			prompt,
+		});
+		await updateWidget(ctx);
+
+		return {
+			block: true,
+			reason: [
+				"Blocked by pi-rules write guard.",
+				"These guarded rules apply before editing the target file(s). Read them, adjust the patch, then retry the tool call.",
+				"",
+				prompt,
+			].join("\n"),
+		};
+	});
+
 	pi.on("tool_result", async (event, ctx) => {
 		if (event.isError) {
 			return undefined;
@@ -217,7 +272,12 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		const extractedPaths = extractToolPaths(event, runtime.state.projectRoot);
 		trackToolPaths(runtime.state, event, extractedPaths);
 
-		if (runtime.config.disabled || runtime.config.mode === "off" || runtime.config.mode === "static") {
+		if (
+			runtime.config.disabled ||
+			runtime.config.mode === "off" ||
+			runtime.config.mode === "static" ||
+			runtime.config.dynamicInjection === "off"
+		) {
 			return undefined;
 		}
 		if (extractedPaths.length === 0) {
@@ -304,7 +364,7 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 				content: [
 					{
 						type: "text",
-						text: `Recommendation ${rec.id} created for ${ruleRelativePath}.\nUse /pi-rules:preview ${rec.id} to review.\nUse /pi-rules:approve ${rec.id} to apply.`,
+						text: `Recommendation ${rec.id} created for ${ruleRelativePath}. Review and apply it through the pi-rules TUI.`,
 					},
 				],
 				details: { id: rec.id },
@@ -399,20 +459,40 @@ function registerFlags(pi: ExtensionAPI): void {
 		type: "boolean",
 		default: true,
 	});
+	pi.registerFlag("pi-rules-write-guard", {
+		description: "Block write/edit tool calls until matching guarded rules have been injected",
+		type: "boolean",
+		default: false,
+	});
+	pi.registerFlag("pi-rules-dynamic-injection", {
+		description: "Dynamic rule injection after tool results: full or off",
+		type: "string",
+		default: "full",
+	});
 }
 
 function readFlags(pi: ExtensionAPI): Partial<PiRulesConfig> {
 	const mode = pi.getFlag("pi-rules-mode");
+	const dynamicInjection = pi.getFlag("pi-rules-dynamic-injection");
 	return {
-		disabled: pi.getFlag("pi-rules-disabled") === true,
-		mode: isMode(mode) ? mode : undefined,
-		recommendationEnabled: pi.getFlag("pi-rules-recommendations") === true,
-		widgetEnabled: pi.getFlag("pi-rules-widget") === true,
+		disabled: pi.getFlag("pi-rules-disabled") === true ? true : undefined,
+		mode: isMode(mode) && mode !== DEFAULT_CONFIG.mode ? mode : undefined,
+		recommendationEnabled: pi.getFlag("pi-rules-recommendations") === false ? false : undefined,
+		widgetEnabled: pi.getFlag("pi-rules-widget") === false ? false : undefined,
+		writeGuardEnabled: pi.getFlag("pi-rules-write-guard") === true ? true : undefined,
+		dynamicInjection:
+			isDynamicInjection(dynamicInjection) && dynamicInjection !== DEFAULT_CONFIG.dynamicInjection
+				? dynamicInjection
+				: undefined,
 	};
 }
 
 function isMode(value: unknown): value is PiRulesMode {
 	return value === "static" || value === "dynamic" || value === "both" || value === "off";
+}
+
+function isDynamicInjection(value: unknown): value is PiRulesConfig["dynamicInjection"] {
+	return value === "off" || value === "full";
 }
 
 function trackToolPaths(state: RuntimeState, event: ToolResultEvent, extractedPaths: string[]): void {

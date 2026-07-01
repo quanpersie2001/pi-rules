@@ -1,4 +1,4 @@
-import type { ToolResultEvent } from "@earendil-works/pi-coding-agent";
+import type { ToolCallEvent, ToolResultEvent } from "@earendil-works/pi-coding-agent";
 import { normalizePath, toRelativeProjectPath } from "../shared/path.js";
 
 export function extractToolPaths(event: ToolResultEvent, projectRoot: string): string[] {
@@ -53,6 +53,14 @@ export function extractRemovedPaths(command: string, projectRoot: string): strin
 export function extractPromptPaths(prompt: string): string[] {
 	const matches = prompt.match(/(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+|[A-Za-z0-9_.-]+\.[A-Za-z0-9_-]+/g) ?? [];
 	return [...new Set(matches.map((match) => normalizePath(match)).filter(isValidPathToken))];
+}
+
+export function extractWriteToolCallPaths(event: ToolCallEvent, projectRoot: string): string[] {
+	if ((event.toolName !== "write" && event.toolName !== "edit") || !hasPathInput(event.input)) {
+		return [];
+	}
+	const path = toRelativeProjectPath(projectRoot, event.input.path);
+	return path.length > 0 && !path.startsWith("..") ? [path] : [];
 }
 
 function hasPathInput(input: Record<string, unknown>): input is Record<string, unknown> & { path: string } {
