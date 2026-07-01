@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.6] - 2026-07-01
+
+### Documentation
+
+- Rewrite README and add ROADMAP
+
+### Features
+
+- Persist rule recommendations
+- *(domain)* Add guard frontmatter and full-injection tracking
+- *(pi-rules)* Add write guard, dynamic injection toggle, and persistent config
+- *(pi-rules)* Add interactive mode and write-guard commands
+
 ## [0.1.5] - 2026-06-19
 
 ### Features
