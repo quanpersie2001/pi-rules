@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.8] - 2026-07-02
+
+### Bug Fixes
+
+- Use extension config files
+
 ## [0.1.7] - 2026-07-02
 
 ### Features
