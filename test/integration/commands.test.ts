@@ -16,11 +16,7 @@ function makeTempProject(label: string): string {
 
 function readProjectConfig(projectDir: string): Record<string, unknown> {
 	try {
-		const settings = JSON.parse(readFileSync(resolve(projectDir, ".pi/settings.json"), "utf8")) as Record<
-			string,
-			unknown
-		>;
-		return settings.piRules as Record<string, unknown>;
+		return JSON.parse(readFileSync(resolve(projectDir, ".pi/pi-rules/config.json"), "utf8")) as Record<string, unknown>;
 	} catch (error) {
 		throw new Error(`Unable to read project config: ${error instanceof Error ? error.message : String(error)}`);
 	}

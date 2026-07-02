@@ -36,15 +36,15 @@ describe("pi-rules config", () => {
 	it("loads global and project config files with project overriding global", () => {
 		const homeDir = makeTempDir("home");
 		const projectDir = makeTempDir("project");
-		mkdirSync(resolve(homeDir, ".pi/agent"), { recursive: true });
-		mkdirSync(resolve(projectDir, ".pi"), { recursive: true });
+		mkdirSync(resolve(homeDir, ".pi/agent/pi-rules"), { recursive: true });
+		mkdirSync(resolve(projectDir, ".pi/pi-rules"), { recursive: true });
 		writeFileSync(
-			resolve(homeDir, ".pi/agent/settings.json"),
-			JSON.stringify({ piRules: { mode: "dynamic", dynamicInjection: "full", writeGuardEnabled: false } }),
+			resolve(homeDir, ".pi/agent/pi-rules/config.json"),
+			JSON.stringify({ mode: "dynamic", dynamicInjection: "full", writeGuardEnabled: false }),
 		);
 		writeFileSync(
-			resolve(projectDir, ".pi/settings.json"),
-			JSON.stringify({ piRules: { mode: "static", dynamicInjection: "off", writeGuardEnabled: true } }),
+			resolve(projectDir, ".pi/pi-rules/config.json"),
+			JSON.stringify({ mode: "static", dynamicInjection: "off", writeGuardEnabled: true }),
 		);
 
 		const config = readConfigFromFiles(projectDir, homeDir);
@@ -73,34 +73,30 @@ describe("pi-rules config", () => {
 	it("ignores missing or invalid config files", () => {
 		const homeDir = makeTempDir("missing-home");
 		const projectDir = makeTempDir("invalid-project");
-		mkdirSync(resolve(projectDir, ".pi"), { recursive: true });
-		writeFileSync(resolve(projectDir, ".pi/settings.json"), "not json");
+		mkdirSync(resolve(projectDir, ".pi/pi-rules"), { recursive: true });
+		writeFileSync(resolve(projectDir, ".pi/pi-rules/config.json"), "not json");
 
 		expect(readConfigFromFiles(projectDir, homeDir)).toEqual({});
 	});
 
-	it("ignores settings without a piRules namespace", () => {
-		const homeDir = makeTempDir("namespace-home");
-		const projectDir = makeTempDir("namespace-project");
+	it("ignores Pi settings.json", () => {
+		const homeDir = makeTempDir("settings-home");
+		const projectDir = makeTempDir("settings-project");
 		mkdirSync(resolve(projectDir, ".pi"), { recursive: true });
-		writeFileSync(resolve(projectDir, ".pi/settings.json"), JSON.stringify({ mode: "static" }));
+		writeFileSync(resolve(projectDir, ".pi/settings.json"), JSON.stringify({ piRules: { mode: "static" } }));
 
 		expect(readConfigFromFiles(projectDir, homeDir)).toEqual({});
 	});
 
-	it("writes project config patches into the piRules settings namespace", () => {
+	it("writes project config patches into the pi-rules config file", () => {
 		const projectDir = makeTempDir("write-project");
-		mkdirSync(resolve(projectDir, ".pi"), { recursive: true });
-		writeFileSync(
-			resolve(projectDir, ".pi/settings.json"),
-			JSON.stringify({ theme: "dark", piRules: { mode: "dynamic" } }),
-		);
+		mkdirSync(resolve(projectDir, ".pi/pi-rules"), { recursive: true });
+		writeFileSync(resolve(projectDir, ".pi/pi-rules/config.json"), JSON.stringify({ mode: "dynamic" }));
 
 		const configPath = writeProjectConfigPatch(projectDir, { writeGuardEnabled: true });
 		const written = readJsonObject(configPath);
 
-		expect(configPath).toBe(resolve(projectDir, ".pi/settings.json"));
-		expect(written.theme).toBe("dark");
-		expect(written.piRules).toEqual({ mode: "dynamic", writeGuardEnabled: true });
+		expect(configPath).toBe(resolve(projectDir, ".pi/pi-rules/config.json"));
+		expect(written).toEqual({ mode: "dynamic", writeGuardEnabled: true });
 	});
 });

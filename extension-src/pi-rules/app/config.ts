@@ -46,19 +46,15 @@ export function readConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Partial
 
 export function readConfigFromFiles(projectRoot: string, homeDir = homedir()): Partial<PiRulesConfig> {
 	return mergePartialConfigFiles(
-		readSettingsConfigFile(resolve(homeDir, CONFIG_DIR_NAME, "agent", "settings.json")),
-		readSettingsConfigFile(resolve(projectRoot, CONFIG_DIR_NAME, "settings.json")),
+		readConfigJsonFile(resolve(homeDir, CONFIG_DIR_NAME, "agent", "pi-rules", "config.json")),
+		readConfigJsonFile(resolve(projectRoot, CONFIG_DIR_NAME, "pi-rules", "config.json")),
 	);
 }
 
 export function writeProjectConfigPatch(projectRoot: string, patch: Partial<PiRulesConfig>): string {
-	const configPath = resolve(projectRoot, CONFIG_DIR_NAME, "settings.json");
+	const configPath = resolve(projectRoot, CONFIG_DIR_NAME, "pi-rules", "config.json");
 	const current = readJsonObject(configPath);
-	const currentNamespace =
-		current.piRules !== null && typeof current.piRules === "object" && !Array.isArray(current.piRules)
-			? (current.piRules as Record<string, unknown>)
-			: {};
-	const next = { ...current, piRules: { ...currentNamespace, ...sanitizeConfigPatch(patch) } };
+	const next = { ...current, ...sanitizeConfigPatch(patch) };
 	mkdirSync(dirname(configPath), { recursive: true });
 	writeFileSync(configPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
 	return configPath;
@@ -118,15 +114,14 @@ function mergePartialConfigFiles(...parts: Array<Partial<PiRulesConfig> | undefi
 	return config;
 }
 
-function readSettingsConfigFile(path: string): Partial<PiRulesConfig> | undefined {
+function readConfigJsonFile(path: string): Partial<PiRulesConfig> | undefined {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(readFileSync(path, "utf8"));
 	} catch {
 		return undefined;
 	}
-	if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
-	return normalizeConfigObject((parsed as Record<string, unknown>).piRules);
+	return normalizeConfigObject(parsed);
 }
 
 function normalizeConfigObject(value: unknown): Partial<PiRulesConfig> | undefined {

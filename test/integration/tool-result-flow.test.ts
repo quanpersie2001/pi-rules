@@ -172,7 +172,8 @@ summary: TS guidance
 
 	it("skips dynamic injection when dynamic injection is off but still tracks read paths", async () => {
 		const projectDir = makeTempProject("dynamic-off");
-		writeFileSync(resolve(projectDir, ".pi/settings.json"), JSON.stringify({ piRules: { dynamicInjection: "off" } }));
+		mkdirSync(resolve(projectDir, ".pi/pi-rules"), { recursive: true });
+		writeFileSync(resolve(projectDir, ".pi/pi-rules/config.json"), JSON.stringify({ dynamicInjection: "off" }));
 		writeFileSync(
 			resolve(projectDir, ".pi/rules/typescript.md"),
 			`---
@@ -222,7 +223,8 @@ summary: TS guidance
 
 	it("blocks edit when write guard finds a guarded rule that was not injected", async () => {
 		const projectDir = makeTempProject("write-guard");
-		writeFileSync(resolve(projectDir, ".pi/settings.json"), JSON.stringify({ piRules: { writeGuardEnabled: true } }));
+		mkdirSync(resolve(projectDir, ".pi/pi-rules"), { recursive: true });
+		writeFileSync(resolve(projectDir, ".pi/pi-rules/config.json"), JSON.stringify({ writeGuardEnabled: true }));
 		writeFileSync(
 			resolve(projectDir, ".pi/rules/typescript.md"),
 			`---
