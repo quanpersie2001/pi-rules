@@ -27,17 +27,19 @@ The work below moves pi-rules from "inject everything aggressively" toward a mod
 | P1 | **Write/edit guard via `tool_call`** | `pi.on("tool_call", ...)` intercepts `write`/`edit` before execution; if a matching `guard` rule hasn't been injected, the call is blocked and the rule is returned in the `reason`. | Done |
 | P1 | **Full-injection tracking** | `RulesEngine.wasFullInjected()` records which guarded rules have been shown, so a retried write passes without re-blocking. | Done |
 | P2 | **Dynamic injection toggle** | New `dynamicInjection: "off" \| "full"` config; `"off"` stops appending full rule bodies to every `read`/`grep`/`find` result while still tracking hot paths for later static injection. | Done |
-| P2 | **Persistent config files** | Global `~/.pi/agent/pi-rules.json` and project `.pi/pi-rules.json`, read by `readConfigFromFiles()`; `writeProjectConfigPatch()` supports non-destructive updates. | Done |
+| P2 | **Persistent config files** | Global `~/.pi/agent/settings.json` and project `.pi/settings.json` under the `piRules` namespace, read by `readConfigFromFiles()`; `writeProjectConfigPatch()` supports non-destructive namespace updates. | Done |
 | P2 | **Interactive config commands** | `/pi-rules:mode` and `/pi-rules:write-guard` open a TUI selector when called without args, or set directly from args (`/pi-rules:mode static`, `/pi-rules:write-guard on`). | Done |
 | P3 | **Flag / config precedence fix** | `readFlags()` now only returns values that differ from `DEFAULT_CONFIG`, so a registered flag default can't silently override a project config file. | Done |
 
-**What this unlocks for users:** a low-noise, guarded policy is now expressible in a project file instead of a long CLI invocation:
+**What this unlocks for users:** a low-noise, guarded policy is now expressible in a project `.pi/settings.json` namespace instead of a long CLI invocation:
 
 ```json
 {
-  "mode": "static",
-  "dynamicInjection": "off",
-  "writeGuardEnabled": true
+  "piRules": {
+    "mode": "static",
+    "dynamicInjection": "off",
+    "writeGuardEnabled": true
+  }
 }
 ```
 

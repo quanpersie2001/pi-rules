@@ -59,22 +59,24 @@ Config files are optional.
 
 | Scope | Path |
 |---|---|
-| Global | `~/.pi/agent/pi-rules.json` |
-| Project | `.pi/pi-rules.json` |
+| Global | `~/.pi/agent/settings.json` → `piRules` |
+| Project | `.pi/settings.json` → `piRules` |
 
 Precedence:
 
 ```text
-defaults < global config < project config < env vars < CLI flags
+defaults < global settings piRules < project settings piRules < env vars < CLI flags
 ```
 
-Recommended low-noise setup:
+Recommended low-noise setup in `.pi/settings.json`:
 
 ```json
 {
-  "mode": "static",
-  "dynamicInjection": "off",
-  "writeGuardEnabled": true
+  "piRules": {
+    "mode": "static",
+    "dynamicInjection": "off",
+    "writeGuardEnabled": true
+  }
 }
 ```
 
@@ -130,7 +132,9 @@ Dynamic injection can be muted independently:
 
 ```json
 {
-  "dynamicInjection": "off"
+  "piRules": {
+    "dynamicInjection": "off"
+  }
 }
 ```
 
@@ -142,7 +146,9 @@ Enable:
 
 ```json
 {
-  "writeGuardEnabled": true
+  "piRules": {
+    "writeGuardEnabled": true
+  }
 }
 ```
 

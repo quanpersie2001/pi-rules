@@ -3,6 +3,8 @@ import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { DEFAULT_MAINTAINER_LOG_LINES, DEFAULT_MAX_CONTEXT_CHARS, DEFAULT_MAX_RULE_CHARS } from "./constants.js";
 
+const CONFIG_DIR_NAME = ".pi";
+
 export type PiRulesMode = "static" | "dynamic" | "both" | "off";
 export type PiRulesDynamicInjection = "off" | "full";
 
@@ -44,15 +46,19 @@ export function readConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Partial
 
 export function readConfigFromFiles(projectRoot: string, homeDir = homedir()): Partial<PiRulesConfig> {
 	return mergePartialConfigFiles(
-		readConfigJsonFile(resolve(homeDir, ".pi/agent/pi-rules.json")),
-		readConfigJsonFile(resolve(projectRoot, ".pi/pi-rules.json")),
+		readSettingsConfigFile(resolve(homeDir, CONFIG_DIR_NAME, "agent", "settings.json")),
+		readSettingsConfigFile(resolve(projectRoot, CONFIG_DIR_NAME, "settings.json")),
 	);
 }
 
 export function writeProjectConfigPatch(projectRoot: string, patch: Partial<PiRulesConfig>): string {
-	const configPath = resolve(projectRoot, ".pi/pi-rules.json");
+	const configPath = resolve(projectRoot, CONFIG_DIR_NAME, "settings.json");
 	const current = readJsonObject(configPath);
-	const next = { ...current, ...sanitizeConfigPatch(patch) };
+	const currentNamespace =
+		current.piRules !== null && typeof current.piRules === "object" && !Array.isArray(current.piRules)
+			? (current.piRules as Record<string, unknown>)
+			: {};
+	const next = { ...current, piRules: { ...currentNamespace, ...sanitizeConfigPatch(patch) } };
 	mkdirSync(dirname(configPath), { recursive: true });
 	writeFileSync(configPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
 	return configPath;
@@ -82,7 +88,19 @@ function readJsonObject(path: string): Record<string, unknown> {
 }
 
 function sanitizeConfigPatch(patch: Partial<PiRulesConfig>): Partial<PiRulesConfig> {
-	return normalizeConfigObject(patch) ?? {};
+	return stripUndefinedConfig(normalizeConfigObject(patch) ?? {});
+}
+
+function stripUndefinedConfig(config: Partial<PiRulesConfig>): Partial<PiRulesConfig> {
+	const result: Partial<PiRulesConfig> = {};
+	for (const [key, value] of Object.entries(config) as Array<
+		[keyof PiRulesConfig, PiRulesConfig[keyof PiRulesConfig] | undefined]
+	>) {
+		if (value !== undefined) {
+			result[key] = value as never;
+		}
+	}
+	return result;
 }
 
 function mergePartialConfigFiles(...parts: Array<Partial<PiRulesConfig> | undefined>): Partial<PiRulesConfig> {
@@ -100,14 +118,15 @@ function mergePartialConfigFiles(...parts: Array<Partial<PiRulesConfig> | undefi
 	return config;
 }
 
-function readConfigJsonFile(path: string): Partial<PiRulesConfig> | undefined {
+function readSettingsConfigFile(path: string): Partial<PiRulesConfig> | undefined {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(readFileSync(path, "utf8"));
 	} catch {
 		return undefined;
 	}
-	return normalizeConfigObject(parsed);
+	if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+	return normalizeConfigObject((parsed as Record<string, unknown>).piRules);
 }
 
 function normalizeConfigObject(value: unknown): Partial<PiRulesConfig> | undefined {
