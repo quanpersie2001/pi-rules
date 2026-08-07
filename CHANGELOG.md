@@ -1,10 +1,24 @@
 # Changelog
 
+## [Unreleased]
+
+### Features
+
+- *(widget)* Applied-rules annotation is now shown in the chat transcript by default (replaces the below-editor hint widget); disable via `PI_RULES_APPLIED_WIDGET=0` or config
+
+### Changed
+
+- *(widget)* Applied-rules annotation is now a compact tree without the `Rules · N applied` header — a dim `└─ rule-file reason` line sits flush under the tool call (requires pi with the `CustomEntryComponent` spacer removed)
+
 ## [0.1.8] - 2026-07-02
 
 ### Bug Fixes
 
 - Use extension config files
+
+### Features
+
+- Use piRules settings namespace
 
 ## [0.1.7] - 2026-07-02
 

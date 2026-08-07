@@ -10,14 +10,15 @@ describe("pi-rules extension registration", () => {
 		piRulesExtension(harness.pi);
 	});
 
-	it("registers exactly 6 flags with the expected names and defaults", () => {
-		expect(harness.flags.size).toBe(6);
+	it("registers exactly 7 flags with the expected names and defaults", () => {
+		expect(harness.flags.size).toBe(7);
 
 		const expectedFlags = [
 			"pi-rules-disabled",
 			"pi-rules-mode",
 			"pi-rules-recommendations",
 			"pi-rules-widget",
+			"pi-rules-applied-widget",
 			"pi-rules-write-guard",
 			"pi-rules-dynamic-injection",
 		];
@@ -29,6 +30,7 @@ describe("pi-rules extension registration", () => {
 		expect(harness.pi.getFlag("pi-rules-mode")).toBe("both");
 		expect(harness.pi.getFlag("pi-rules-recommendations")).toBe(true);
 		expect(harness.pi.getFlag("pi-rules-widget")).toBe(true);
+		expect(harness.pi.getFlag("pi-rules-applied-widget")).toBe(true);
 		expect(harness.pi.getFlag("pi-rules-write-guard")).toBe(false);
 		expect(harness.pi.getFlag("pi-rules-dynamic-injection")).toBe("full");
 	});

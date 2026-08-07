@@ -21,6 +21,21 @@ triggers:
 ---
 ```
 
+For always-apply rules that should stay silent in non-code areas, add `ignorePath`:
+
+```yaml
+---
+kind: rules
+paths:
+  - '**/*'
+alwaysApply: true
+summary: Global conventions (skipped while editing docs).
+ignorePath:
+  - 'docs/**'
+  - 'README.md'
+---
+```
+
 For inventory files:
 
 ```yaml

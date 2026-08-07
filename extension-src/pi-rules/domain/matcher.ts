@@ -9,12 +9,21 @@ export function matchRules(rules: ParsedRule[], targetPaths: string[]): MatchedR
 
 	for (const rule of rules) {
 		if (rule.frontmatter.alwaysApply === true) {
+			// alwaysApply rules match unless every target is excluded via ignorePath.
+			// Empty target set (no path signals) keeps matching, preserving the
+			// historical behavior for pure-text / continuation turns.
+			if (normalizedTargets.length > 0 && normalizedTargets.every((target) => isTargetIgnored(rule, target))) {
+				continue;
+			}
 			matches.push({ ...rule, matchReason: { type: "alwaysApply" } });
 			continue;
 		}
 
 		const patterns = normalizePatterns(rule.frontmatter.paths);
 		for (const targetPath of normalizedTargets) {
+			if (isTargetIgnored(rule, targetPath)) {
+				continue;
+			}
 			const matchedPattern = patterns.find((pattern) => safeMatch(pattern, targetPath));
 			if (matchedPattern !== undefined) {
 				matches.push({
@@ -33,6 +42,16 @@ function normalizePatterns(paths: string | string[] | undefined): string[] {
 	if (paths === undefined) return [];
 	const values = Array.isArray(paths) ? paths : [paths];
 	return values.map((value) => normalizePath(value));
+}
+
+/**
+ * True when the target path matches any `ignorePath` glob pattern of the rule.
+ * Invalid patterns never exclude (consistent with `paths` matching).
+ */
+function isTargetIgnored(rule: ParsedRule, targetPath: string): boolean {
+	const patterns = normalizePatterns(rule.frontmatter.ignorePath);
+	if (patterns.length === 0) return false;
+	return patterns.some((pattern) => safeMatch(pattern, targetPath));
 }
 
 function safeMatch(pattern: string, targetPath: string): boolean {

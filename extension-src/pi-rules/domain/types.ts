@@ -1,5 +1,11 @@
 export interface RuleFrontmatter {
 	paths?: string | string[];
+	/**
+	 * Glob patterns excluding target paths. A rule is skipped when the
+	 * current target set is entirely covered by these patterns (e.g.
+	 * `alwaysApply` rules that should stay silent while editing `docs/`).
+	 */
+	ignorePath?: string | string[];
 	summary?: string;
 	alwaysApply?: boolean;
 	description?: string;
@@ -50,6 +56,8 @@ export interface InjectionRecord {
 		matchReason: MatchReason;
 	}>;
 	injectedAt: number;
+	/** Wall-clock time spent producing the matched context, in milliseconds. */
+	elapsedMs?: number;
 	truncated: boolean;
 }
 

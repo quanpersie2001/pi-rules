@@ -64,6 +64,41 @@ body`;
 		expect(result.frontmatter.paths).toBe("src/**/*.ts");
 	});
 
+	it("parses ignorePath array and single string", () => {
+		const content = `---
+paths:
+  - "src/**/*.ts"
+ignorePath:
+  - "docs/**"
+  - "README.md"
+summary: Excludes docs
+---
+body`;
+		const result = parseRuleFile(makeRuleFile("ignored.md"), content);
+		expect(result.frontmatter.ignorePath).toEqual(["docs/**", "README.md"]);
+		expect(result.diagnostics).toHaveLength(0);
+
+		const single = parseRuleFile(
+			makeRuleFile("ignored-single.md"),
+			`---
+ignorePath: "docs/**"
+---
+body`,
+		);
+		expect(single.frontmatter.ignorePath).toBe("docs/**");
+	});
+
+	it("ignores invalid ignorePath type with a warning", () => {
+		const content = `---
+ignorePath: 42
+---
+body`;
+		const result = parseRuleFile(makeRuleFile("ignored-bad.md"), content);
+		expect(result.frontmatter.ignorePath).toBeUndefined();
+		expect(result.diagnostics).toHaveLength(1);
+		expect(result.diagnostics[0].message).toContain("ignorePath");
+	});
+
 	it("handles missing frontmatter gracefully", () => {
 		const content = "# Just a markdown file\nno frontmatter here";
 		const result = parseRuleFile(makeRuleFile("plain.md"), content);

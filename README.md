@@ -88,6 +88,7 @@ Recommended low-noise setup in `.pi/pi-rules/config.json`:
 | `writeGuardEnabled` | `boolean` | `false` |
 | `recommendationEnabled` | `boolean` | `true` |
 | `widgetEnabled` | `boolean` | `true` |
+| `appliedWidgetEnabled` | `boolean` | `true` |
 | `maxRuleChars` | `number` | `12000` |
 | `maxContextChars` | `number` | `40000` |
 | `maintainerLogLines` | `number` | `100` |
@@ -103,6 +104,7 @@ Recommended low-noise setup in `.pi/pi-rules/config.json`:
 | `PI_RULES_MAX_CONTEXT_CHARS=40000` | Total context cap per injection |
 | `PI_RULES_MAINTAINER_LOG_LINES=100` | Maintainer log tail length |
 | `PI_RULES_RECOMMENDATIONS_DISABLED=1` | Disable rule recommendations |
+| `PI_RULES_APPLIED_WIDGET=1\|0` | Force-enable (`1`) or disable (`0`) the applied-rules chat annotation (on by default) |
 
 ### CLI flags
 
@@ -113,7 +115,21 @@ Recommended low-noise setup in `.pi/pi-rules/config.json`:
 --pi-rules-write-guard
 --pi-rules-recommendations
 --pi-rules-widget
+--pi-rules-applied-widget
 ```
+
+---
+
+## Applied-rules chat annotation
+
+On by default: after each injection, a dim annotation is appended to the chat transcript showing which rules were injected for that turn:
+
+```text
+├─ core/csharp.md       **/*.cs
+└─ architecture/module-structure.md  src/Modules/**
+```
+
+Each line shows the rule file and how it matched (`alwaysApply`, a glob pattern, or a trigger phrase). The annotation updates on every injection (static, dynamic, and write-guard) and persists in the session — it is display-only and never sent to the model context. Requires pi `>=0.80.4` (custom entry renderers). To turn it off, set `appliedWidgetEnabled: false` in the config file or `PI_RULES_APPLIED_WIDGET=0`.
 
 ---
 
@@ -175,6 +191,8 @@ write, edit
 ---
 paths:
   - "src/auth/**/*.ts"
+ignorePath:
+  - "docs/**"
 summary: Auth conventions
 triggers:
   - "login flow"
@@ -188,6 +206,7 @@ guard: true
 | Field | Type | Description |
 |---|---|---|
 | `paths` | `string \| string[]` | Glob patterns matched against project-relative paths. |
+| `ignorePath` | `string \| string[]` | Glob patterns excluded from matching. The rule is skipped when every target path matches one of these patterns (e.g. `alwaysApply` rules that should stay silent while editing `docs/`). |
 | `summary` | `string` | One-line routing summary. |
 | `triggers` | `string \| string[]` | Prompt phrases that should load the rule. |
 | `alwaysApply` | `boolean` | Inject on every code-related turn. Use sparingly. |
@@ -204,6 +223,29 @@ When parent and child rules both match, child rules are injected fully and paren
 .pi/rules/api/api.md          → summary only
 .pi/rules/api/auth/auth.md    → full body
 ```
+
+### Ignoring paths (`ignorePath`)
+
+`ignorePath` excludes target paths from a rule. A rule is skipped when **every** target path of the turn matches one of its `ignorePath` patterns — useful for `alwaysApply` rules that would otherwise be injected (and waste tokens) while the agent only edits `docs/`.
+
+```yaml
+---
+paths:
+  - "**/*"
+alwaysApply: true
+summary: Code conventions (skipped while editing docs)
+ignorePath:
+  - "docs/**"
+  - "README.md"
+---
+```
+
+Two strictness levels:
+
+- **`alwaysApply: true` + `ignorePath`** — still injected on signal-less turns (no path tokens in prompt, no tool activity yet) that are code-related.
+- **`paths: ["**"]` + `ignorePath`** — strictest: never injected when the turn carries no path signals at all, and skipped when all targets are ignored. Prefer this when the rule only matters for real code work.
+
+Additionally, `alwaysApply` + `ignorePath` rules are suppressed entirely on non-code turns that carry no path signals (e.g. "improve the wording in the documentation"), since there is no target for the ignore check to evaluate.
 
 ---
 

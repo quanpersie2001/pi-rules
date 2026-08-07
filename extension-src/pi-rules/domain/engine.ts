@@ -244,7 +244,7 @@ export class RulesEngine {
 		return false;
 	}
 
-	recordInjection(targetPaths: string[], context: RuleContextResult): InjectionRecord {
+	recordInjection(targetPaths: string[], context: RuleContextResult, elapsedMs?: number): InjectionRecord {
 		const record: InjectionRecord = {
 			turnId: createId("turn"),
 			targetPaths,
@@ -255,6 +255,7 @@ export class RulesEngine {
 				matchReason: match.matchReason,
 			})),
 			injectedAt: now(),
+			elapsedMs,
 			truncated: context.truncated,
 		};
 		this.lastContext = record;

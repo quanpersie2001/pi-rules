@@ -13,6 +13,8 @@ export interface PiRulesConfig {
 	mode: PiRulesMode;
 	recommendationEnabled: boolean;
 	widgetEnabled: boolean;
+	/** When true, a dim annotation listing the rules applied to the current turn is appended to the chat transcript. */
+	appliedWidgetEnabled: boolean;
 	maxRuleChars: number;
 	maxContextChars: number;
 	maintainerLogLines: number;
@@ -25,6 +27,7 @@ export const DEFAULT_CONFIG: PiRulesConfig = {
 	mode: "both",
 	recommendationEnabled: true,
 	widgetEnabled: true,
+	appliedWidgetEnabled: true,
 	maxRuleChars: DEFAULT_MAX_RULE_CHARS,
 	maxContextChars: DEFAULT_MAX_CONTEXT_CHARS,
 	maintainerLogLines: DEFAULT_MAINTAINER_LOG_LINES,
@@ -36,6 +39,8 @@ export function readConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Partial
 	return {
 		disabled: env.PI_RULES_DISABLED === "1" ? true : undefined,
 		recommendationEnabled: env.PI_RULES_RECOMMENDATIONS_DISABLED === "1" ? false : undefined,
+		appliedWidgetEnabled:
+			env.PI_RULES_APPLIED_WIDGET === "0" ? false : env.PI_RULES_APPLIED_WIDGET === "1" ? true : undefined,
 		maxRuleChars: parsePositiveInteger(env.PI_RULES_MAX_RULE_CHARS),
 		maxContextChars: parsePositiveInteger(env.PI_RULES_MAX_CONTEXT_CHARS),
 		maintainerLogLines: parsePositiveInteger(env.PI_RULES_MAINTAINER_LOG_LINES),
@@ -132,6 +137,7 @@ function normalizeConfigObject(value: unknown): Partial<PiRulesConfig> | undefin
 		mode: isMode(input.mode) ? input.mode : undefined,
 		recommendationEnabled: typeof input.recommendationEnabled === "boolean" ? input.recommendationEnabled : undefined,
 		widgetEnabled: typeof input.widgetEnabled === "boolean" ? input.widgetEnabled : undefined,
+		appliedWidgetEnabled: typeof input.appliedWidgetEnabled === "boolean" ? input.appliedWidgetEnabled : undefined,
 		maxRuleChars: typeof input.maxRuleChars === "number" && input.maxRuleChars > 0 ? input.maxRuleChars : undefined,
 		maxContextChars:
 			typeof input.maxContextChars === "number" && input.maxContextChars > 0 ? input.maxContextChars : undefined,

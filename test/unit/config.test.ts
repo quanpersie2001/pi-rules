@@ -61,13 +61,42 @@ describe("pi-rules config", () => {
 	it("merges defaults, files, env, and flags in precedence order", () => {
 		const merged = mergeConfig(
 			{ mode: "dynamic", writeGuardEnabled: false, dynamicInjection: "full" },
-			readConfigFromEnv({ PI_RULES_WRITE_GUARD: "1", PI_RULES_DYNAMIC_INJECTION: "off" } as NodeJS.ProcessEnv),
+			readConfigFromEnv({
+				PI_RULES_WRITE_GUARD: "1",
+				PI_RULES_DYNAMIC_INJECTION: "off",
+				PI_RULES_APPLIED_WIDGET: "1",
+			} as NodeJS.ProcessEnv),
 			{ mode: "static" },
 		);
 
 		expect(merged.mode).toBe("static");
 		expect(merged.writeGuardEnabled).toBe(true);
 		expect(merged.dynamicInjection).toBe("off");
+		expect(merged.appliedWidgetEnabled).toBe(true);
+	});
+
+	it("defaults appliedWidgetEnabled to true", () => {
+		expect(mergeConfig().appliedWidgetEnabled).toBe(true);
+		expect(mergeConfig({ appliedWidgetEnabled: true }).appliedWidgetEnabled).toBe(true);
+		expect(mergeConfig({ appliedWidgetEnabled: false }).appliedWidgetEnabled).toBe(false);
+	});
+
+	it("reads appliedWidgetEnabled from env (1 enables, 0 disables)", () => {
+		expect(readConfigFromEnv({ PI_RULES_APPLIED_WIDGET: "0" } as NodeJS.ProcessEnv).appliedWidgetEnabled).toBe(false);
+		expect(readConfigFromEnv({ PI_RULES_APPLIED_WIDGET: "1" } as NodeJS.ProcessEnv).appliedWidgetEnabled).toBe(true);
+		expect(readConfigFromEnv({} as NodeJS.ProcessEnv).appliedWidgetEnabled).toBeUndefined();
+	});
+
+	it("reads appliedWidgetEnabled from project config files", () => {
+		const homeDir = makeTempDir("applied-home");
+		const projectDir = makeTempDir("applied-project");
+		mkdirSync(resolve(homeDir, ".pi/agent/pi-rules"), { recursive: true });
+		mkdirSync(resolve(projectDir, ".pi/pi-rules"), { recursive: true });
+		writeFileSync(resolve(homeDir, ".pi/agent/pi-rules/config.json"), JSON.stringify({ appliedWidgetEnabled: true }));
+		writeFileSync(resolve(projectDir, ".pi/pi-rules/config.json"), JSON.stringify({ appliedWidgetEnabled: false }));
+
+		const config = readConfigFromFiles(projectDir, homeDir);
+		expect(config.appliedWidgetEnabled).toBe(false); // project overrides global
 	});
 
 	it("ignores missing or invalid config files", () => {

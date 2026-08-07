@@ -194,6 +194,7 @@ export function createFakePi(): FakePiHarness {
 		registerCommand,
 		registerFlag,
 		registerShortcut: noop as unknown as ExtensionAPI["registerShortcut"],
+		registerEntryRenderer: noop as unknown as ExtensionAPI["registerEntryRenderer"],
 		getFlag,
 		registerMessageRenderer: noop as unknown as ExtensionAPI["registerMessageRenderer"],
 		sendMessage: noop as unknown as ExtensionAPI["sendMessage"],

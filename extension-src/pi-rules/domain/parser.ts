@@ -39,7 +39,7 @@ function normalizeFrontmatter(
 	if (typeof input.guard === "boolean") frontmatter.guard = input.guard;
 
 	frontmatter.paths = normalizeStringOrArray(input.paths, "paths", diagnostics, rulePath);
-	frontmatter.paths = normalizeStringOrArray(input.paths, "paths", diagnostics, rulePath);
+	frontmatter.ignorePath = normalizeStringOrArray(input.ignorePath, "ignorePath", diagnostics, rulePath);
 	frontmatter.triggers = normalizeStringArray(input.triggers, "triggers", diagnostics, rulePath);
 
 	if (input.kind !== undefined) {

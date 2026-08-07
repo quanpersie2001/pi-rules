@@ -21,12 +21,16 @@ export async function runDoctor(cwd: string, runtimeDeps: RuntimeDeps): Promise<
 		const paths = Array.isArray(rule.frontmatter.paths)
 			? rule.frontmatter.paths.join(", ")
 			: (rule.frontmatter.paths ?? "always");
+		const ignorePaths = Array.isArray(rule.frontmatter.ignorePath)
+			? rule.frontmatter.ignorePath.join(", ")
+			: (rule.frontmatter.ignorePath ?? "-");
 		const kind = rule.frontmatter.kind ?? "rules";
 		const priority = rule.frontmatter.priority ?? 0;
 		const summary = rule.frontmatter.summary ?? rule.frontmatter.description ?? "";
 		lines.push(`  ${rule.relativePath}`);
 		lines.push(`    summary  : ${summary}`);
 		lines.push(`    paths    : ${paths}`);
+		lines.push(`    ignore   : ${ignorePaths}`);
 		lines.push(`    kind     : ${kind}`);
 		lines.push(`    priority : ${priority}`);
 		lines.push("");

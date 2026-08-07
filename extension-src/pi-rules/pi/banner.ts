@@ -17,6 +17,18 @@ export interface StatusLineInput {
 }
 
 /**
+ * Theme tokens used by the applied-rules annotation. Kept as a narrow
+ * union so the renderer stays pure and unit-testable without a TUI while
+ * remaining assignable to pi's `ThemeColor`.
+ */
+export type ThemeFgToken = "dim";
+
+/**
+ * Theme function shape used by {@link renderAppliedRulesLines}.
+ */
+export type ThemeFg = (token: ThemeFgToken, text: string) => string;
+
+/**
  * Render the multi-line banner content for `ctx.ui.setWidget`.
  * Only shows the active rules count — keep it minimal.
  */
@@ -32,4 +44,72 @@ export function statusLineText({ ruleCount, hasErrors, pendingCount }: StatusLin
 	const base = `pi-rules: ${ruleCount} rules ✓`;
 	const withPending = pendingCount > 0 ? `${base} | ${pendingCount} pending` : base;
 	return hasErrors ? `${withPending} (!)` : withPending;
+}
+
+/**
+ * Input for the "applied rules" annotation: the last injection record plus
+ * the theme `fg` function. Rules are rendered as a dim tree so the
+ * annotation stays unobtrusive (hint style) while still showing what was
+ * injected.
+ */
+export interface AppliedRulesInput {
+	/** Rule entries from `InjectionRecord.rules`. */
+	rules: Array<{
+		relativePath: string;
+		summary?: string;
+		matchReason: {
+			type: "alwaysApply" | "path" | "trigger";
+			targetPath?: string;
+			pattern?: string;
+			trigger?: string;
+		};
+	}>;
+}
+
+/**
+ * Data stored in the `pi-rules-applied` chat entry. Rendered by the
+ * registered entry renderer; never sent to the LLM.
+ */
+export type AppliedRulesEntryData = AppliedRulesInput;
+
+/**
+ * Render the applied-rules annotation lines shown in the chat transcript
+ * after a turn's injection. Compact single-purpose tree with no header
+ * line, so the annotation hugs the preceding transcript line.
+ *
+ * ```
+ * ├─ core/csharp.md       **\/*.cs
+ * └─ architecture/module-structure.md  src\/Modules\/**
+ * ```
+ *
+ * Rule lines use `dim` ("hint mờ" style). Pass a passthrough `fg` in tests.
+ */
+function describeAppliedReason(reason: AppliedRulesInput["rules"][number]["matchReason"]): string {
+	if (reason.type === "path") return reason.pattern ?? reason.targetPath ?? "path";
+	if (reason.type === "trigger") return `trigger: ${reason.trigger ?? "?"}`;
+	return "alwaysApply";
+}
+
+export function renderAppliedRulesLines(input: AppliedRulesInput, fg: ThemeFg = (_, text) => text): string[] {
+	const { rules } = input;
+	if (rules.length === 0) {
+		return [];
+	}
+
+	// Align rule paths to the widest entry so the reason column lines up.
+	const maxPathLen = Math.max(...rules.map((rule) => rule.relativePath.length));
+	const rendered = rules.map((rule) => ({
+		path: rule.relativePath.padEnd(maxPathLen + 2),
+		reason: describeAppliedReason(rule.matchReason),
+	}));
+
+	// Tree connectors: all-but-last get ├─, the last gets └─. No leading
+	// indent — the annotation sits flush under the previous transcript line.
+	const lines: string[] = [];
+	for (let i = 0; i < rendered.length; i++) {
+		const connector = i === rendered.length - 1 ? "└─" : "├─";
+		lines.push(fg("dim", `${connector} ${rendered[i].path}${rendered[i].reason}`));
+	}
+
+	return lines;
 }

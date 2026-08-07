@@ -211,8 +211,13 @@ export function formatStatus(status: RuleStatus, pendingCount?: number): string 
 		const scope = Array.isArray(rule.frontmatter.paths)
 			? rule.frontmatter.paths.join(", ")
 			: (rule.frontmatter.paths ?? (rule.frontmatter.alwaysApply ? "alwaysApply" : "none"));
+		const ignore = Array.isArray(rule.frontmatter.ignorePath)
+			? rule.frontmatter.ignorePath.join(", ")
+			: rule.frontmatter.ignorePath;
 		lines.push(
-			`- ${rule.relativePath} :: ${scope}${rule.frontmatter.summary ? ` :: ${rule.frontmatter.summary}` : ""}`,
+			`- ${rule.relativePath} :: ${scope}${ignore ? ` :: (ignore: ${ignore})` : ""}${
+				rule.frontmatter.summary ? ` :: ${rule.frontmatter.summary}` : ""
+			}`,
 		);
 	}
 	for (const diagnostic of status.diagnostics) {

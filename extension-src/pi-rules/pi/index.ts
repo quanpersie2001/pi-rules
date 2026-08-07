@@ -2,6 +2,7 @@ import { realpathSync } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { AgentToolResult, ExtensionAPI, ExtensionContext, ToolResultEvent } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
 	DEFAULT_CONFIG,
@@ -22,9 +23,12 @@ import {
 } from "../features/tool-paths.js";
 import { startWatcher, type Watcher } from "../features/watcher.js";
 import { findProjectRoot, normalizePath } from "../shared/path.js";
-import { statusLineText } from "./banner.js";
+import { type AppliedRulesEntryData, renderAppliedRulesLines, statusLineText } from "./banner.js";
 import { registerCommands } from "./commands.js";
 import { createRuntime, normalizeCandidatePath, type RuntimeDeps } from "./runtime.js";
+
+/** Custom chat entry type: dim "rules applied" annotation for the current turn. */
+const APPLIED_RULES_ENTRY = "pi-rules-applied";
 
 const CODE_EDIT_KEYWORDS = [
 	"fix",
@@ -193,6 +197,7 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		const targetPaths =
 			baseTargets.length > 0 ? baseTargets : dedupePaths(runtime.state.lastContext?.targetPaths ?? []);
 
+		const matchStart = performance.now();
 		// Use matchRulesForPathsStatic to skip context-file-backed rules
 		const context = await runtime.engine.matchRulesForPathsStatic(
 			ctx.cwd,
@@ -200,11 +205,23 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 			contextFileRealPaths,
 			codeRelated ? event.prompt : undefined,
 		);
+		const matchElapsedMs = performance.now() - matchStart;
 
 		// For non-code prompts (but not when using lastContext fallback), filter out non-alwaysApply rules
 		let filteredMatches = context.matches;
 		if (!codeRelated && !usingLastContextFallback) {
 			filteredMatches = context.matches.filter((m) => m.matchReason.type === "alwaysApply");
+		}
+		// Suppress alwaysApply rules that opted into path-based suppression via
+		// ignorePath when the turn carries ZERO path signals and the prompt is
+		// not code-related (e.g. "fix typos in the documentation" without a file
+		// path). With no targets the matcher cannot evaluate ignorePath, so we
+		// apply the rule author's intent directly. Covers both the fresh-session
+		// case (empty targetPaths) and the lastContext fallback (stale paths).
+		if (!codeRelated && baseTargets.length === 0) {
+			filteredMatches = filteredMatches.filter(
+				(m) => !(m.matchReason.type === "alwaysApply" && m.frontmatter.ignorePath !== undefined),
+			);
 		}
 
 		if (filteredMatches.length === 0) {
@@ -218,8 +235,9 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 				: context;
 
 		runtime.engine.markStaticInjectedBatch(finalContext.matches);
-		runtime.state.lastContext = runtime.engine.recordInjection(targetPaths, finalContext);
+		runtime.state.lastContext = runtime.engine.recordInjection(targetPaths, finalContext, matchElapsedMs);
 		await updateWidget(ctx);
+		annotateAppliedRules();
 		return {
 			systemPrompt: `${event.systemPrompt}\n\n${finalContext.prompt}`,
 		};
@@ -236,7 +254,9 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 			return undefined;
 		}
 
+		const matchStart = performance.now();
 		const context = await runtime.engine.matchRulesForPaths(ctx.cwd, targetPaths);
+		const matchElapsedMs = performance.now() - matchStart;
 		const missingGuardedRules = context.matches.filter(
 			(match) => match.frontmatter.guard === true && !runtime.engine.wasFullInjected(match),
 		);
@@ -246,12 +266,17 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 
 		const prompt = formatMatches(missingGuardedRules, runtime);
 		runtime.engine.markStaticInjectedBatch(missingGuardedRules);
-		runtime.state.lastContext = runtime.engine.recordInjection(targetPaths, {
-			...context,
-			matches: missingGuardedRules,
-			prompt,
-		});
+		runtime.state.lastContext = runtime.engine.recordInjection(
+			targetPaths,
+			{
+				...context,
+				matches: missingGuardedRules,
+				prompt,
+			},
+			matchElapsedMs,
+		);
 		await updateWidget(ctx);
+		annotateAppliedRules();
 
 		return {
 			block: true,
@@ -285,14 +310,17 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		}
 
 		// Use matchRulesForPathsDynamic to avoid re-injecting rules already injected this turn
+		const matchStart = performance.now();
 		const context = await runtime.engine.matchRulesForPathsDynamic(ctx.cwd, extractedPaths);
+		const matchElapsedMs = performance.now() - matchStart;
 		if (context.prompt.length === 0) {
 			return undefined;
 		}
 
 		runtime.engine.markDynamicInjectedBatch(extractedPaths[0] ?? "_all", context.matches);
-		runtime.state.lastContext = runtime.engine.recordInjection(extractedPaths, context);
+		runtime.state.lastContext = runtime.engine.recordInjection(extractedPaths, context, matchElapsedMs);
 		await updateWidget(ctx);
+		annotateAppliedRules();
 		return {
 			content: [...event.content, { type: "text", text: context.prompt }],
 		};
@@ -377,7 +405,10 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		label: "Create Rule",
 		description: "Create a new .pi/rules markdown file with frontmatter",
 		promptSnippet: "Create durable .pi/rules files when the user asks to persist a project convention.",
-		promptGuidelines: ["Use create_rule when the user explicitly wants to save an instruction under .pi/rules."],
+		promptGuidelines: [
+			"Use create_rule when the user explicitly wants to save an instruction under .pi/rules.",
+			"When creating an alwaysApply rule, always consider adding ignorePath for non-code areas (e.g. docs/**) so the rule is not injected while the agent works on documentation — this saves tokens.",
+		],
 		parameters: Type.Object({
 			name: Type.String({ description: "Safe filename stem for the rule" }),
 			summary: Type.String({ description: "One-line routing summary" }),
@@ -386,6 +417,11 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 			}),
 			body: Type.String({ description: "Markdown rule body" }),
 			alwaysApply: Type.Optional(Type.Boolean({ description: "Apply to all turns" })),
+			ignorePath: Type.Optional(
+				Type.Array(Type.String({ description: "Project-relative glob pattern to exclude" }), {
+					description: "Paths where the rule should NOT apply (e.g. docs/** for alwaysApply rules)",
+				}),
+			),
 			overwrite: Type.Optional(Type.Boolean({ description: "Overwrite if the file already exists" })),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<AgentToolResult<{ path: string }>> {
@@ -404,6 +440,9 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 				"---",
 				"paths:",
 				...params.paths.map((path) => `  - ${JSON.stringify(path)}`),
+				...(params.ignorePath && params.ignorePath.length > 0
+					? ["ignorePath:", ...params.ignorePath.map((path) => `  - ${JSON.stringify(path)}`)]
+					: []),
 				`summary: ${JSON.stringify(params.summary)}`,
 				`alwaysApply: ${params.alwaysApply === true ? "true" : "false"}`,
 				"---",
@@ -420,12 +459,11 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		},
 	});
 
-	// ─── Widget ─────────────────────────────────────
+	// ─── Status widget ────────────────────────────────
 
 	async function updateWidget(ctx: ExtensionContext): Promise<void> {
 		if (!runtime.config.widgetEnabled) {
 			ctx.ui.setStatus("pi-rules", undefined);
-			ctx.ui.setWidget("pi-rules", undefined);
 			return;
 		}
 
@@ -436,6 +474,36 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		const stats = await runtime.store.getStats().catch(() => ({ pending: 0 }));
 		ctx.ui.setStatus("pi-rules", statusLineText({ ruleCount, hasErrors, pendingCount: stats.pending ?? 0 }));
 	}
+
+	/**
+	 * Append a dim chat-transcript annotation listing the rules injected into
+	 * the current turn. TUI-only (custom entry, never sent to the LLM).
+	 */
+	function annotateAppliedRules(): void {
+		if (!runtime.config.appliedWidgetEnabled) {
+			return;
+		}
+		const lastContext = runtime.engine.getLastContext();
+		if (lastContext === undefined || lastContext.rules.length === 0) {
+			return;
+		}
+		pi.appendEntry(APPLIED_RULES_ENTRY, {
+			rules: lastContext.rules.map((rule) => ({
+				relativePath: rule.relativePath,
+				summary: rule.summary,
+				matchReason: rule.matchReason,
+			})),
+		} satisfies AppliedRulesEntryData);
+	}
+
+	// Dim annotation in the chat transcript listing the rules applied to the
+	// current turn. Rendered as dim tree lines; not part of LLM context.
+	pi.registerEntryRenderer(APPLIED_RULES_ENTRY, (entry, _options, theme) => {
+		const lines = renderAppliedRulesLines(entry.data as AppliedRulesEntryData, (token, text) => theme.fg(token, text));
+		// Explicit zero padding: the Text default (1, 1) would add a blank line
+		// and a leading space, breaking the flush-under-tool-call layout.
+		return new Text(lines.join("\n"), 0, 0);
+	});
 }
 
 function registerFlags(pi: ExtensionAPI): void {
@@ -459,6 +527,11 @@ function registerFlags(pi: ExtensionAPI): void {
 		type: "boolean",
 		default: true,
 	});
+	pi.registerFlag("pi-rules-applied-widget", {
+		description: "Append a dim chat annotation listing the rules applied to the current turn",
+		type: "boolean",
+		default: true,
+	});
 	pi.registerFlag("pi-rules-write-guard", {
 		description: "Block write/edit tool calls until matching guarded rules have been injected",
 		type: "boolean",
@@ -479,6 +552,7 @@ function readFlags(pi: ExtensionAPI): Partial<PiRulesConfig> {
 		mode: isMode(mode) && mode !== DEFAULT_CONFIG.mode ? mode : undefined,
 		recommendationEnabled: pi.getFlag("pi-rules-recommendations") === false ? false : undefined,
 		widgetEnabled: pi.getFlag("pi-rules-widget") === false ? false : undefined,
+		appliedWidgetEnabled: pi.getFlag("pi-rules-applied-widget") === false ? false : undefined,
 		writeGuardEnabled: pi.getFlag("pi-rules-write-guard") === true ? true : undefined,
 		dynamicInjection:
 			isDynamicInjection(dynamicInjection) && dynamicInjection !== DEFAULT_CONFIG.dynamicInjection

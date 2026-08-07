@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 describe("session flow integration", () => {
-	it("loads rules on session_start and surfaces status + widget", async () => {
+	it("loads rules on session_start and surfaces status", async () => {
 		const projectDir = makeTempProject("status");
 		writeFileSync(
 			resolve(projectDir, ".pi/rules/global.md"),
@@ -222,7 +222,7 @@ summary: G
 		expect(result).toBeUndefined();
 	});
 
-	it("agent_start clears the status/widget when widget is disabled", async () => {
+	it("agent_start clears the status when widget is disabled", async () => {
 		const projectDir = makeTempProject("widget-off");
 		writeFileSync(
 			resolve(projectDir, ".pi/rules/global.md"),
@@ -240,9 +240,8 @@ summary: G
 
 		await harness.emit("session_start", { type: "session_start", reason: "startup" }, ctx);
 
-		// After session_start with widget disabled, status and widget should be cleared (undefined).
+		// After session_start with widget disabled, status should be cleared (undefined).
 		expect(harness.statuses.get("pi-rules")?.text).toBeUndefined();
-		expect(harness.widgets.get("pi-rules")?.content).toBeUndefined();
 	});
 
 	it("preserves sessionHotPaths across agent_start so cross-turn matching still works", async () => {
@@ -413,6 +412,251 @@ summary: Auth rules
 		const resultObj = result as { systemPrompt: string };
 		expect(resultObj.systemPrompt).toContain("Auth Trigger Body");
 		expect(resultObj.systemPrompt).toContain('trigger: "fix auth"');
+	});
+
+	it("suppresses alwaysApply+ignorePath rules on signal-less non-code turns", async () => {
+		const projectDir = makeTempProject("ignore-pathless");
+		writeFileSync(
+			resolve(projectDir, ".pi/rules/global.md"),
+			`---
+alwaysApply: true
+ignorePath:
+  - "docs/**"
+summary: Global
+---
+# Global Body`,
+		);
+
+		const harness = createFakePi();
+		piRulesExtension(harness.pi);
+		const ctx = harness.makeCtx({ cwd: projectDir });
+
+		await harness.emit("session_start", { type: "session_start", reason: "startup" }, ctx);
+
+		// Non-code prompt with no path tokens and no prior tool activity:
+		// the ignorePath opt-in suppresses the alwaysApply rule.
+		const result = await harness.emit(
+			"before_agent_start",
+			{
+				type: "before_agent_start",
+				prompt: "improve the wording in the documentation",
+				systemPrompt: "Base.",
+				systemPromptOptions: { contextFiles: [] },
+			},
+			ctx,
+		);
+
+		expect(result).toBeUndefined();
+	});
+
+	it("suppresses alwaysApply+ignorePath rules during lastContext fallback on non-code turns", async () => {
+		const projectDir = makeTempProject("ignore-pathless-fallback");
+		writeFileSync(
+			resolve(projectDir, ".pi/rules/global.md"),
+			`---
+alwaysApply: true
+ignorePath:
+  - "docs/**"
+summary: Global
+---
+# Global Body`,
+		);
+
+		const harness = createFakePi();
+		piRulesExtension(harness.pi);
+		const ctx = harness.makeCtx({ cwd: projectDir });
+
+		await harness.emit("session_start", { type: "session_start", reason: "startup" }, ctx);
+
+		// Turn 1: code prompt establishes a lastContext with code targets.
+		await harness.emit(
+			"before_agent_start",
+			{
+				type: "before_agent_start",
+				prompt: "fix src/main.ts",
+				systemPrompt: "Base.",
+				systemPromptOptions: { contextFiles: [] },
+			},
+			ctx,
+		);
+
+		await harness.emit("session_compact", { type: "session_compact" }, ctx);
+		await harness.emit("agent_start", { type: "agent_start" }, ctx);
+
+		// Turn 2 (post-compact): path-less non-code prompt. The fallback would
+		// reuse the stale code targets and inject the rule; the ignorePath
+		// opt-in must suppress it instead.
+		const result2 = await harness.emit(
+			"before_agent_start",
+			{
+				type: "before_agent_start",
+				prompt: "continue with the documentation task",
+				systemPrompt: "Base.",
+				systemPromptOptions: { contextFiles: [] },
+			},
+			ctx,
+		);
+
+		expect(result2).toBeUndefined();
+	});
+
+	it("keeps alwaysApply+ignorePath rule when a code path is in the working set", async () => {
+		const projectDir = makeTempProject("ignore-with-code-path");
+		writeFileSync(
+			resolve(projectDir, ".pi/rules/global.md"),
+			`---
+alwaysApply: true
+ignorePath:
+  - "docs/**"
+summary: Global
+---
+# Global Body`,
+		);
+
+		const harness = createFakePi();
+		piRulesExtension(harness.pi);
+		const ctx = harness.makeCtx({ cwd: projectDir });
+
+		await harness.emit("session_start", { type: "session_start", reason: "startup" }, ctx);
+
+		// Session memory contains a code path from an earlier turn.
+		await harness.emit(
+			"tool_result",
+			{
+				type: "tool_result",
+				toolCallId: "tc-1",
+				toolName: "read",
+				input: { path: "src/main.ts" },
+				content: [{ type: "text", text: "code" }],
+				details: undefined,
+				isError: false,
+			},
+			ctx,
+		);
+		await harness.emit("agent_start", { type: "agent_start" }, ctx);
+
+		// Path-less non-code prompt: baseTargets is non-empty (sessionHotPaths),
+		// so no suppression — the rule is still relevant to src/main.ts.
+		const result = await harness.emit(
+			"before_agent_start",
+			{
+				type: "before_agent_start",
+				prompt: "what should I document next?",
+				systemPrompt: "Base.",
+				systemPromptOptions: { contextFiles: [] },
+			},
+			ctx,
+		);
+
+		expect(result).toBeDefined();
+		const resultObj = result as { systemPrompt: string };
+		expect(resultObj.systemPrompt).toContain("Global Body");
+	});
+
+	it("keeps alwaysApply without ignorePath on signal-less non-code turns", async () => {
+		const projectDir = makeTempProject("plain-always-pathless");
+		writeFileSync(
+			resolve(projectDir, ".pi/rules/global.md"),
+			`---
+alwaysApply: true
+summary: Global
+---
+# Global Body`,
+		);
+
+		const harness = createFakePi();
+		piRulesExtension(harness.pi);
+		const ctx = harness.makeCtx({ cwd: projectDir });
+
+		await harness.emit("session_start", { type: "session_start", reason: "startup" }, ctx);
+
+		const result = await harness.emit(
+			"before_agent_start",
+			{
+				type: "before_agent_start",
+				prompt: "what is the project about?",
+				systemPrompt: "Base.",
+				systemPromptOptions: { contextFiles: [] },
+			},
+			ctx,
+		);
+
+		expect(result).toBeDefined();
+		const resultObj = result as { systemPrompt: string };
+		expect(resultObj.systemPrompt).toContain("Global Body");
+	});
+
+	it("appends an applied-rules chat annotation by default after injection", async () => {
+		const projectDir = makeTempProject("applied-widget");
+		writeFileSync(
+			resolve(projectDir, ".pi/rules/global.md"),
+			`---
+alwaysApply: true
+summary: Global
+---
+# Global Body`,
+		);
+
+		const harness = createFakePi();
+		// No flag set: the annotation is on by default.
+		piRulesExtension(harness.pi);
+		const ctx = harness.makeCtx({ cwd: projectDir });
+
+		await harness.emit("session_start", { type: "session_start", reason: "startup" }, ctx);
+		harness.entries.length = 0;
+
+		await harness.emit(
+			"before_agent_start",
+			{
+				type: "before_agent_start",
+				prompt: "fix src/foo.ts",
+				systemPrompt: "Base.",
+				systemPromptOptions: { contextFiles: [] },
+			},
+			ctx,
+		);
+
+		const entries = harness.entries.filter((entry) => entry.customType === "pi-rules-applied");
+		expect(entries).toHaveLength(1);
+		const data = entries[0]?.data as { rules: Array<{ relativePath: string; matchReason: { type: string } }> };
+		expect(data.rules).toHaveLength(1);
+		expect(data.rules[0]?.relativePath).toBe(".pi/rules/global.md");
+		expect(data.rules[0]?.matchReason.type).toBe("alwaysApply");
+	});
+
+	it("does not append an applied-rules annotation when no rule matched", async () => {
+		const projectDir = makeTempProject("applied-widget-empty");
+		writeFileSync(
+			resolve(projectDir, ".pi/rules/scoped.md"),
+			`---
+paths:
+  - "src/auth/**/*.ts"
+summary: Auth
+---
+# Auth Body`,
+		);
+
+		const harness = createFakePi();
+		// No flag set: annotation is on by default, so a turn with no matching rule appends nothing.
+		piRulesExtension(harness.pi);
+		const ctx = harness.makeCtx({ cwd: projectDir });
+
+		await harness.emit("session_start", { type: "session_start", reason: "startup" }, ctx);
+		harness.entries.length = 0;
+
+		// No matching rule for this prompt → no injection → no annotation.
+		await harness.emit(
+			"before_agent_start",
+			{
+				type: "before_agent_start",
+				prompt: "fix src/unrelated.ts",
+				systemPrompt: "Base.",
+				systemPromptOptions: { contextFiles: [] },
+			},
+			ctx,
+		);
+
+		expect(harness.entries.filter((entry) => entry.customType === "pi-rules-applied")).toHaveLength(0);
 	});
 
 	it("skips non-alwaysApply rules for non-code prompts", async () => {

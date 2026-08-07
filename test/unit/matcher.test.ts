@@ -74,13 +74,96 @@ describe("matchRules", () => {
 		expect(matches).toHaveLength(0);
 	});
 
-	it("deduplicates rules matched by multiple targets", () => {
-		const rule = makeRule({
-			relativePath: "all.md",
-			frontmatter: { paths: ["**/*.ts"] },
+	describe("alwaysApply with ignorePath", () => {
+		it("skips alwaysApply rule when all targets are ignored", () => {
+			const rule = makeRule({
+				relativePath: "code-conventions.md",
+				frontmatter: { alwaysApply: true, ignorePath: ["docs/**", "README.md"] },
+			});
+			const matches = matchRules([rule], ["docs/guide.md", "docs/api/overview.md"]);
+			expect(matches).toHaveLength(0);
 		});
-		const matches = matchRules([rule], ["a.ts", "b.ts"]);
-		expect(matches).toHaveLength(1);
+
+		it("keeps alwaysApply rule when at least one target is not ignored", () => {
+			const rule = makeRule({
+				relativePath: "code-conventions.md",
+				frontmatter: { alwaysApply: true, ignorePath: ["docs/**"] },
+			});
+			const matches = matchRules([rule], ["docs/guide.md", "src/main.ts"]);
+			expect(matches).toHaveLength(1);
+			expect(matches[0].matchReason).toEqual({ type: "alwaysApply" });
+		});
+
+		it("keeps alwaysApply rule when no target is ignored", () => {
+			const rule = makeRule({
+				relativePath: "code-conventions.md",
+				frontmatter: { alwaysApply: true, ignorePath: ["docs/**"] },
+			});
+			const matches = matchRules([rule], ["src/main.ts"]);
+			expect(matches).toHaveLength(1);
+		});
+
+		it("keeps alwaysApply rule with ignorePath when target set is empty", () => {
+			const rule = makeRule({
+				relativePath: "code-conventions.md",
+				frontmatter: { alwaysApply: true, ignorePath: ["docs/**"] },
+			});
+			const matches = matchRules([rule], []);
+			expect(matches).toHaveLength(1);
+			expect(matches[0].matchReason).toEqual({ type: "alwaysApply" });
+		});
+	});
+
+	describe("path rules with ignorePath", () => {
+		it("does not match a target covered by ignorePath", () => {
+			const rule = makeRule({
+				relativePath: "modules.md",
+				frontmatter: { paths: ["src/Modules/**/*.cs"], ignorePath: ["src/Modules/Generated/**"] },
+			});
+			const matches = matchRules([rule], ["src/Modules/Generated/Proxy.cs"]);
+			expect(matches).toHaveLength(0);
+		});
+
+		it("matches when a non-ignored target matches paths", () => {
+			const rule = makeRule({
+				relativePath: "modules.md",
+				frontmatter: { paths: ["src/Modules/**/*.cs"], ignorePath: ["src/Modules/Generated/**"] },
+			});
+			const matches = matchRules([rule], ["src/Modules/Generated/Proxy.cs", "src/Modules/Orders/CreateOrder.cs"]);
+			expect(matches).toHaveLength(1);
+			expect(matches[0].matchReason).toEqual({
+				type: "path",
+				targetPath: "src/Modules/Orders/CreateOrder.cs",
+				pattern: "src/Modules/**/*.cs",
+			});
+		});
+
+		it("treats single-string ignorePath like an array", () => {
+			const rule = makeRule({
+				relativePath: "modules.md",
+				frontmatter: { paths: ["src/Modules/**/*.cs"], ignorePath: "src/Modules/Generated/**" },
+			});
+			const matches = matchRules([rule], ["src/Modules/Generated/Proxy.cs"]);
+			expect(matches).toHaveLength(0);
+		});
+
+		it("ignores invalid ignorePath glob patterns gracefully", () => {
+			const rule = makeRule({
+				relativePath: "modules.md",
+				frontmatter: { paths: ["src/**/*.ts"], ignorePath: ["[invalid"] },
+			});
+			const matches = matchRules([rule], ["src/main.ts"]);
+			expect(matches).toHaveLength(1);
+		});
+
+		it("does not affect trigger matching", () => {
+			const rule = makeRule({
+				relativePath: "auth.md",
+				frontmatter: { triggers: ["fix auth"], ignorePath: ["docs/**"] },
+			});
+			const matches = matchByTriggers([rule], "please fix auth login issue");
+			expect(matches).toHaveLength(1);
+		});
 	});
 });
 
