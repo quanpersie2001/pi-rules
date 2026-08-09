@@ -88,6 +88,14 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 	);
 	let watcher: Watcher | null = null;
 	let reloadInFlight = false;
+	/** Rule IDs already shown in the current agent run's applied-rules hint. */
+	const annotatedRuleIds = new Set<string>();
+	/**
+	 * `before_agent_start` runs before Pi emits `agent_start`. Keep this scope
+	 * active through that event so the static annotation is not immediately
+	 * forgotten before dynamic tool-result annotations arrive.
+	 */
+	let appliedRulesScopeActive = false;
 	function syncRuntime(cwd: string): void {
 		const nextProjectRoot = findProjectRoot(cwd);
 		const nextConfig = mergeConfig(readConfigFromFiles(nextProjectRoot), readConfigFromEnv(), readFlags(pi));
@@ -98,6 +106,8 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 
 		if (projectChanged || limitsChanged) {
 			const previousState = runtime.state;
+			annotatedRuleIds.clear();
+			appliedRulesScopeActive = false;
 			runtime = createRuntime(cwd, nextConfig);
 			for (const path of previousState.recentReadPaths) runtime.state.recentReadPaths.add(path);
 			for (const path of previousState.recentChangedPaths) runtime.state.recentChangedPaths.add(path);
@@ -116,6 +126,8 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		annotatedRuleIds.clear();
+		appliedRulesScopeActive = false;
 		const projectRoot = findProjectRoot(ctx.cwd);
 		runtime = createRuntime(ctx.cwd, mergeConfig(readConfigFromFiles(projectRoot), readConfigFromEnv(), readFlags(pi)));
 		await runtime.store.initialize();
@@ -156,12 +168,30 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 
 	pi.on("agent_start", async (_event, ctx) => {
 		syncRuntime(ctx.cwd);
+		// The initial agent_start follows before_agent_start, so preserve the
+		// static rules already shown. A direct/continuation start with no active
+		// scope begins with a fresh display set.
+		if (!appliedRulesScopeActive) {
+			annotatedRuleIds.clear();
+		}
 		runtime.engine.resetTurn();
 		resetTurnState(runtime.state);
 	});
 
+	pi.on("agent_settled", async () => {
+		// `agent_end` can be followed by an automatic retry/continuation. Wait
+		// for the settled event so those continuations share one display scope.
+		annotatedRuleIds.clear();
+		appliedRulesScopeActive = false;
+	});
+
 	pi.on("before_agent_start", async (event, ctx) => {
 		syncRuntime(ctx.cwd);
+		// A new user prompt starts a new display scope. We intentionally reset
+		// here rather than in agent_start because Pi emits agent_start after this
+		// hook has already performed the static injection.
+		annotatedRuleIds.clear();
+		appliedRulesScopeActive = true;
 		if (runtime.config.disabled || runtime.config.mode === "off" || runtime.config.mode === "dynamic") {
 			return undefined;
 		}
@@ -476,8 +506,8 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 	}
 
 	/**
-	 * Append a dim chat-transcript annotation listing the rules injected into
-	 * the current turn. TUI-only (custom entry, never sent to the LLM).
+	 * Append a dim chat-transcript annotation listing newly injected rules in
+	 * the current agent run. TUI-only (custom entry, never sent to the LLM).
 	 */
 	function annotateAppliedRules(): void {
 		if (!runtime.config.appliedWidgetEnabled) {
@@ -487,8 +517,23 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		if (lastContext === undefined || lastContext.rules.length === 0) {
 			return;
 		}
+
+		// Dynamic injections can rediscover the same rule for every target path,
+		// and static + dynamic mode can see it more than once in one agent run.
+		// Append only rules that have not already appeared in this run; keep the
+		// first match reason and incoming matcher order.
+		const newRules = lastContext.rules.filter((rule) => {
+			if (annotatedRuleIds.has(rule.ruleId)) return false;
+			annotatedRuleIds.add(rule.ruleId);
+			return true;
+		});
+		if (newRules.length === 0) {
+			return;
+		}
+
 		pi.appendEntry(APPLIED_RULES_ENTRY, {
-			rules: lastContext.rules.map((rule) => ({
+			rules: newRules.map((rule) => ({
+				ruleId: rule.ruleId,
 				relativePath: rule.relativePath,
 				summary: rule.summary,
 				matchReason: rule.matchReason,

@@ -122,14 +122,14 @@ Recommended low-noise setup in `.pi/pi-rules/config.json`:
 
 ## Applied-rules chat annotation
 
-On by default: after each injection, a dim annotation is appended to the chat transcript showing which rules were injected for that turn:
+On by default: when an injection contains rules not already shown for the current agent run, a dim annotation is appended to the chat transcript:
 
 ```text
 ├─ core/csharp.md       **/*.cs
 └─ architecture/module-structure.md  src/Modules/**
 ```
 
-Each line shows the rule file and how it matched (`alwaysApply`, a glob pattern, or a trigger phrase). The annotation updates on every injection (static, dynamic, and write-guard) and persists in the session — it is display-only and never sent to the model context. Requires pi `>=0.80.4` (custom entry renderers). To turn it off, set `appliedWidgetEnabled: false` in the config file or `PI_RULES_APPLIED_WIDGET=0`.
+Each line shows the rule file and how it matched (`alwaysApply`, a glob pattern, or a trigger phrase). Repeated injections of the same rule in one agent run are shown only once; newly discovered rules add a compact entry. The annotation persists in the session — it is display-only and never sent to the model context. Requires pi `>=0.80.4` (custom entry renderers). To turn it off, set `appliedWidgetEnabled: false` in the config file or `PI_RULES_APPLIED_WIDGET=0`.
 
 ---
 

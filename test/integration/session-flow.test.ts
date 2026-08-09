@@ -624,6 +624,88 @@ summary: Global
 		expect(data.rules[0]?.matchReason.type).toBe("alwaysApply");
 	});
 
+	it("deduplicates applied-rules annotations across repeated static and dynamic matches", async () => {
+		const projectDir = makeTempProject("applied-widget-dedup");
+		writeFileSync(
+			resolve(projectDir, ".pi/rules/global.md"),
+			`---
+alwaysApply: true
+summary: Global
+---
+# Global Body`,
+		);
+		writeFileSync(
+			resolve(projectDir, ".pi/rules/typescript.md"),
+			`---
+paths:
+  - "src/**/*.ts"
+summary: TypeScript
+---
+# TypeScript Body`,
+		);
+		writeFileSync(
+			resolve(projectDir, ".pi/rules/new-area.md"),
+			`---
+paths:
+  - "src/new/**/*.ts"
+summary: New area
+---
+# New area Body`,
+		);
+
+		const harness = createFakePi();
+		piRulesExtension(harness.pi);
+		const ctx = harness.makeCtx({ cwd: projectDir });
+
+		await harness.emit("session_start", { type: "session_start", reason: "startup" }, ctx);
+		harness.entries.length = 0;
+
+		// Static injection establishes the first two displayed rules. Pi emits
+		// agent_start after this hook in the real lifecycle; include it so the
+		// engine can accept subsequent dynamic matches.
+		await harness.emit(
+			"before_agent_start",
+			{
+				type: "before_agent_start",
+				prompt: "fix src/handler.ts",
+				systemPrompt: "Base.",
+				systemPromptOptions: { contextFiles: [] },
+			},
+			ctx,
+		);
+		await harness.emit("agent_start", { type: "agent_start" }, ctx);
+
+		const readResult = (path: string, toolCallId: string) =>
+			harness.emit(
+				"tool_result",
+				{
+					type: "tool_result",
+					toolCallId,
+					toolName: "read",
+					input: { path },
+					content: [{ type: "text", text: "ok" }],
+					details: undefined,
+					isError: false,
+				},
+				ctx,
+			);
+
+		// The same rules are rediscovered for the same and another target path,
+		// but should not create more hint entries.
+		await readResult("src/handler.ts", "tc-1");
+		await readResult("src/other.ts", "tc-2");
+		// A genuinely new rule is appended once, without repeating the globals.
+		await readResult("src/new/file.ts", "tc-3");
+		await readResult("src/new/other.ts", "tc-4");
+
+		const entries = harness.entries.filter((entry) => entry.customType === "pi-rules-applied");
+		expect(entries).toHaveLength(2);
+		const firstRules = (entries[0]?.data as { rules: Array<{ relativePath: string }> }).rules;
+		const secondRules = (entries[1]?.data as { rules: Array<{ relativePath: string }> }).rules;
+		expect(firstRules.map((rule) => rule.relativePath)).toEqual([".pi/rules/global.md", ".pi/rules/typescript.md"]);
+		expect(secondRules.map((rule) => rule.relativePath)).toEqual([".pi/rules/new-area.md"]);
+	});
+
 	it("does not append an applied-rules annotation when no rule matched", async () => {
 		const projectDir = makeTempProject("applied-widget-empty");
 		writeFileSync(

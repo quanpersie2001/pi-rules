@@ -55,6 +55,37 @@ describe("renderAppliedRulesLines", () => {
 		expect(lines[1]).toContain("trigger: fix auth");
 	});
 
+	it("deduplicates repeated rule entries while keeping the first reason and order", () => {
+		const lines = renderAppliedRulesLines({
+			rules: [
+				{
+					ruleId: "rule-a",
+					relativePath: "a.md",
+					matchReason: { type: "path", pattern: "first/**" },
+				},
+				{
+					ruleId: "rule-a",
+					relativePath: "a.md",
+					matchReason: { type: "path", pattern: "second/**" },
+				},
+				{
+					relativePath: "b.md",
+					matchReason: { type: "alwaysApply" },
+				},
+				{
+					relativePath: "b.md",
+					matchReason: { type: "trigger", trigger: "repeat" },
+				},
+			],
+		});
+
+		expect(lines).toHaveLength(2);
+		expect(lines[0]).toContain("first/**");
+		expect(lines[0]).not.toContain("second/**");
+		expect(lines[1]).toContain("alwaysApply");
+		expect(lines[1]).not.toContain("repeat");
+	});
+
 	it("renders nothing for an empty rule list", () => {
 		const lines = renderAppliedRulesLines(makeInput({ rules: [] }));
 		expect(lines).toEqual([]);

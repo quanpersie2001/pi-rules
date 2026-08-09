@@ -6,6 +6,10 @@
 
 - Add ignorePath frontmatter and applied-rules chat annotation
 
+### Bug Fixes
+
+- *(widget)* Deduplicate repeated applied-rule hints within an agent run while retaining newly discovered rules
+
 ## [0.1.8] - 2026-07-02
 
 ### Bug Fixes

@@ -55,6 +55,7 @@ export function statusLineText({ ruleCount, hasErrors, pendingCount }: StatusLin
 export interface AppliedRulesInput {
 	/** Rule entries from `InjectionRecord.rules`. */
 	rules: Array<{
+		ruleId?: string;
 		relativePath: string;
 		summary?: string;
 		matchReason: {
@@ -91,7 +92,16 @@ function describeAppliedReason(reason: AppliedRulesInput["rules"][number]["match
 }
 
 export function renderAppliedRulesLines(input: AppliedRulesInput, fg: ThemeFg = (_, text) => text): string[] {
-	const { rules } = input;
+	// A rule can be present more than once when a context was assembled from
+	// several match sources. Keep the first occurrence so its first match
+	// reason remains the one shown to the user.
+	const seen = new Set<string>();
+	const rules = input.rules.filter((rule) => {
+		const key = rule.ruleId ?? rule.relativePath;
+		if (seen.has(key)) return false;
+		seen.add(key);
+		return true;
+	});
 	if (rules.length === 0) {
 		return [];
 	}
