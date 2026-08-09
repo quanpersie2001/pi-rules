@@ -616,6 +616,10 @@ summary: Global
 			ctx,
 		);
 
+		// The annotation is deferred to the first context event of the turn (Pi
+		// renders the user message only after before_agent_start), so flush it.
+		await harness.emit("context", { type: "context", messages: [] }, ctx);
+
 		const entries = harness.entries.filter((entry) => entry.customType === "pi-rules-applied");
 		expect(entries).toHaveLength(1);
 		const data = entries[0]?.data as { rules: Array<{ relativePath: string; matchReason: { type: string } }> };
@@ -674,6 +678,9 @@ summary: New area
 			ctx,
 		);
 		await harness.emit("agent_start", { type: "agent_start" }, ctx);
+		// The static annotation flushes on the first context event, before any
+		// dynamic tool-result annotations arrive.
+		await harness.emit("context", { type: "context", messages: [] }, ctx);
 
 		const readResult = (path: string, toolCallId: string) =>
 			harness.emit(

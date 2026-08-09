@@ -342,4 +342,105 @@ summary: TS guidance
 		const resultObj = result as { systemPrompt: string };
 		expect(resultObj.systemPrompt).toContain("TS body");
 	});
+
+	it("defers the applied-rules annotation until the first context event so it renders below the new user message", async () => {
+		const projectDir = makeTempProject("deferred-annotation");
+		writeFileSync(
+			resolve(projectDir, ".pi/rules/typescript.md"),
+			`---
+paths:
+  - "src/**/*.ts"
+summary: TS guidance
+---
+# TS body`,
+		);
+
+		const harness = createFakePi();
+		piRulesExtension(harness.pi);
+		const ctx = harness.makeCtx({ cwd: projectDir });
+
+		await harness.emit("session_start", { type: "session_start", reason: "startup" }, ctx);
+
+		// Static injection happens in before_agent_start, but the annotation must
+		// NOT be appended there: Pi renders the user's new message only after this
+		// hook, so an inline append would place the annotation above the message.
+		const staticResult = await harness.emit(
+			"before_agent_start",
+			{
+				type: "before_agent_start",
+				prompt: "fix src/handler.ts",
+				systemPrompt: "Base.",
+				systemPromptOptions: { contextFiles: [] },
+			},
+			ctx,
+		);
+		expect(staticResult).toBeDefined();
+		expect((staticResult as { systemPrompt: string }).systemPrompt).toContain("TS body");
+		expect(harness.entries).toHaveLength(0);
+
+		// The first context event of the turn is the earliest point at which the
+		// user message is already rendered and persisted — flush the annotation there.
+		await harness.emit("context", { type: "context", messages: [] }, ctx);
+		expect(harness.entries).toHaveLength(1);
+		expect(harness.entries[0]?.customType).toBe("pi-rules-applied");
+		const data = harness.entries[0]?.data as { rules: Array<{ relativePath: string }> };
+		expect(data.rules.map((rule) => rule.relativePath)).toEqual([".pi/rules/typescript.md"]);
+
+		// Later context events (e.g. tool-call turns) must not re-append.
+		await harness.emit("context", { type: "context", messages: [] }, ctx);
+		expect(harness.entries).toHaveLength(1);
+	});
+
+	it("does not leak a pending annotation from an aborted run into the next turn", async () => {
+		const projectDir = makeTempProject("stale-annotation");
+		writeFileSync(
+			resolve(projectDir, ".pi/rules/typescript.md"),
+			`---
+paths:
+  - "src/**/*.ts"
+summary: TS guidance
+---
+# TS body`,
+		);
+
+		const harness = createFakePi();
+		piRulesExtension(harness.pi);
+		const ctx = harness.makeCtx({ cwd: projectDir });
+
+		await harness.emit("session_start", { type: "session_start", reason: "startup" }, ctx);
+
+		// Turn 1 injects, but the run is aborted before any context event fires.
+		// The annotation stays pending and is never appended.
+		const result = await harness.emit(
+			"before_agent_start",
+			{
+				type: "before_agent_start",
+				prompt: "fix src/handler.ts",
+				systemPrompt: "Base.",
+				systemPromptOptions: { contextFiles: [] },
+			},
+			ctx,
+		);
+		expect(result).toBeDefined();
+		expect(harness.entries).toHaveLength(0);
+
+		// Settling the run must drop the pending annotation.
+		await harness.emit("agent_settled", { type: "agent_settled" }, ctx);
+
+		// Turn 2: non-code prompt with a non-matching path — nothing is injected.
+		// Its first context event must not flush the stale rules from turn 1.
+		const secondResult = await harness.emit(
+			"before_agent_start",
+			{
+				type: "before_agent_start",
+				prompt: "hello world docs/readme.md",
+				systemPrompt: "Base.",
+				systemPromptOptions: { contextFiles: [] },
+			},
+			ctx,
+		);
+		expect(secondResult).toBeUndefined();
+		await harness.emit("context", { type: "context", messages: [] }, ctx);
+		expect(harness.entries).toHaveLength(0);
+	});
 });

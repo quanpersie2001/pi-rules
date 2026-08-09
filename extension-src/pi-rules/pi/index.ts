@@ -96,6 +96,15 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 	 * forgotten before dynamic tool-result annotations arrive.
 	 */
 	let appliedRulesScopeActive = false;
+	/**
+	 * Set when `before_agent_start` performed a static injection. The applied-rules
+	 * annotation is NOT appended inline there: Pi renders the user's new message
+	 * only after `before_agent_start` returns, so appending inline would place the
+	 * annotation ABOVE the message. The first `context` event of the turn is the
+	 * earliest point at which the message is already on screen and persisted, so
+	 * the annotation is flushed there instead.
+	 */
+	let pendingStaticAnnotation = false;
 	function syncRuntime(cwd: string): void {
 		const nextProjectRoot = findProjectRoot(cwd);
 		const nextConfig = mergeConfig(readConfigFromFiles(nextProjectRoot), readConfigFromEnv(), readFlags(pi));
@@ -108,6 +117,7 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 			const previousState = runtime.state;
 			annotatedRuleIds.clear();
 			appliedRulesScopeActive = false;
+			pendingStaticAnnotation = false;
 			runtime = createRuntime(cwd, nextConfig);
 			for (const path of previousState.recentReadPaths) runtime.state.recentReadPaths.add(path);
 			for (const path of previousState.recentChangedPaths) runtime.state.recentChangedPaths.add(path);
@@ -128,6 +138,7 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", async (_event, ctx) => {
 		annotatedRuleIds.clear();
 		appliedRulesScopeActive = false;
+		pendingStaticAnnotation = false;
 		const projectRoot = findProjectRoot(ctx.cwd);
 		runtime = createRuntime(ctx.cwd, mergeConfig(readConfigFromFiles(projectRoot), readConfigFromEnv(), readFlags(pi)));
 		await runtime.store.initialize();
@@ -183,6 +194,10 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		// for the settled event so those continuations share one display scope.
 		annotatedRuleIds.clear();
 		appliedRulesScopeActive = false;
+		// A run may end without ever reaching `context` (e.g. aborted before the
+		// first LLM call). Drop the pending annotation so a later turn without
+		// its own injection cannot flush a stale one.
+		pendingStaticAnnotation = false;
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
@@ -192,6 +207,7 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		// hook has already performed the static injection.
 		annotatedRuleIds.clear();
 		appliedRulesScopeActive = true;
+		pendingStaticAnnotation = false;
 		if (runtime.config.disabled || runtime.config.mode === "off" || runtime.config.mode === "dynamic") {
 			return undefined;
 		}
@@ -267,10 +283,23 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 		runtime.engine.markStaticInjectedBatch(finalContext.matches);
 		runtime.state.lastContext = runtime.engine.recordInjection(targetPaths, finalContext, matchElapsedMs);
 		await updateWidget(ctx);
-		annotateAppliedRules();
+		// Do not append the applied-rules annotation here. `before_agent_start`
+		// runs before Pi renders the user's new message, so an inline append
+		// would place the annotation ABOVE the message. Flush it on the first
+		// `context` event of the turn instead, when the message is on screen and
+		// persisted but the assistant has not started streaming.
+		pendingStaticAnnotation = true;
 		return {
 			systemPrompt: `${event.systemPrompt}\n\n${finalContext.prompt}`,
 		};
+	});
+
+	pi.on("context", async () => {
+		if (!pendingStaticAnnotation) {
+			return;
+		}
+		pendingStaticAnnotation = false;
+		annotateAppliedRules();
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
@@ -508,6 +537,11 @@ export default function piRulesExtension(pi: ExtensionAPI): void {
 	/**
 	 * Append a dim chat-transcript annotation listing newly injected rules in
 	 * the current agent run. TUI-only (custom entry, never sent to the LLM).
+	 *
+	 * The static `before_agent_start` injection is flushed here from the first
+	 * `context` event (see `pendingStaticAnnotation`) so the annotation lands
+	 * below the user's new message; write-guard and tool-result injections
+	 * call this inline mid-turn.
 	 */
 	function annotateAppliedRules(): void {
 		if (!runtime.config.appliedWidgetEnabled) {
