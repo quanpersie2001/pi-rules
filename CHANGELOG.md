@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.11] - 2026-08-26
+
+### Bug Fixes
+
+- *(widget)* Defer applied-rules annotation to first context event
+
 ## [0.1.10] - 2026-08-09
 
 ### Bug Fixes
